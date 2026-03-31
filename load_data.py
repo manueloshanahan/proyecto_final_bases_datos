@@ -98,6 +98,15 @@ def insertar_datos(client, conexion, nombre_bd_mongo, nombre_colec, nombre_bd_my
         print("Ha surgido un error creando la base de datos y su tabla: ", e)
 
 
+def conexion_mongo():
+    return MongoClient(config.CONNECTION_STRING) 
+
+def conexion_SQL():
+    return pymysql.connect(
+            host=config.host, 
+            user=config.user,
+            password=config.password, 
+        )
 
 
 if __name__ == "__main__":
@@ -105,7 +114,7 @@ if __name__ == "__main__":
     lista_rutas = [config.ruta_juegos, config.ruta_juguetes, config.ruta_musica, config.ruta_instrumento]
     
     try:
-        client = MongoClient(config.CONNECTION_STRING) 
+        client = conexion_mongo()
         #inserta_mongodb(client, config.nombre_bd_mongo, config.coleccion_mongo, lista_ruta)
         client.close()
         
@@ -113,11 +122,7 @@ if __name__ == "__main__":
         print("Error al conectar con MongoDB:", e)
         
     try:
-        conexion_mysql = pymysql.connect(
-            host=config.host, 
-            user=config.user,
-            password=config.password, 
-        )
+        conexion_mysql = conexion_SQL()
         #inserta_datos_mysql(conexion_mysql, nombre_bd, nombre_colecc, ruta_fichero_json)
         conexion_mysql.close()
         
