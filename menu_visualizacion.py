@@ -71,7 +71,7 @@ def salida():
 if __name__ == "__main__":
     try:
         client = conexion_mongo()
-        # db = client[DB_NAME] # DataBase
+        db = client["reviews"] # DataBase
         # collection = db[COLLECTION_NAME] # Colección
 
         conexion_mysql = conexion_SQL()
