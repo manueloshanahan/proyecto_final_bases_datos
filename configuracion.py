@@ -1,9 +1,8 @@
 # LUCÍA RAVENTÓS GONZALVO Y MANUEL O'SHANAHAN DELGADO-TARAMONA 2ºIMAT B
 
-nombre_bd_sql = "Comercio"
-nombre_bd_mongo = "Comerio"
+nombre_bd_sql = "comercio"
+nombre_bd_mongo = "comercio"
 coleccion_mongo = "reviews"
-
 
 # CONEXIÓN MONGODB
 CONNECTION_STRING="mongodb://localhost:27017"
