@@ -93,11 +93,12 @@ def insertar_datos(client, conexion, nombre_bd_mongo, nombre_colec, nombre_bd_my
                             try:
                                 fecha_obj = datetime.strptime(fecha_dicc, '%m %d, %Y')
                                 fecha_mysql = fecha_obj.strftime('%Y-%m-%d')
+                                
                             except ValueError:
-                                pass # Si la fecha viene rara, se quedará como None
+                                pass # Si la fecha viene mal, se quedará como None
                         
                         
-                        tupla_fecha = (unixReviewTime, review_dicc.get("reviewTime", None))
+                        tupla_fecha = (unixReviewTime, fecha_mysql)
                         
                         tupla_reviews = (
                             id,
