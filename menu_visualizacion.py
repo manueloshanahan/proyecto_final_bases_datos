@@ -21,7 +21,17 @@ def mostrar_inicio():
 def evolucion_por_años():
     st.title("Evolución de reviews por años")
     st.write("Visualización usando seaborn.")
+
+    # Elección de tipo de review
+    opcion = st.sidebar.selectbox(
+        "Elige una opción",
+        ["Videojuegos", "Juguetes y juegos", "Música", "Instrumentos", "TODO"])
+
+    st.write("Has elegido:", opcion)
+
     fig, ax = plt.subplots()
+
+
 
     st.pyplot(fig)
     
