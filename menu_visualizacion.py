@@ -8,15 +8,22 @@ from load_data import conexion_db_SQL, conexion_mongo
 from configuracion import nombre_bd_sql, nombre_bd_mongo, coleccion_mongo
 import streamlit as st
 import matplotlib.pyplot as plt
+import re
+from collections import Counter
+from wordcloud import WordCloud
+
 
 # Configuración general de la página
 st.set_page_config(page_title="Menú de visualización", layout="wide")
+
+# VARIABLES GLOBALES
+dict_frecuencias = {}
 
 # FUNCIONES AUXILIARES
 def eleccion_tipo():
     """
     Función que abre una pestaña en la pantalla escogida de la aplicación 
-    y da a elegir al usuario el tipo de producto que desea visualizar el estudio de sus reviews.
+    y da a elegir al usuario el tipo de producto, o incluso todos, que desea visualizar el estudio de sus reviews.
 
     In:
         None
@@ -49,7 +56,7 @@ def eleccion_tipo_comp(cursor):
     # Elección
     opcion = st.selectbox(
         "Elige una opción",
-        ["Artículo individual","Video Games", "Toys and Games", "Digital Music", "Musical Instruments", "TODO"])
+        ["Video Games", "Toys and Games", "Digital Music", "Musical Instruments", "TODO", "Artículo individual"])
     
     st.write("Has elegido:", opcion) # Nombrar opción escogida        
     
@@ -70,6 +77,54 @@ def eleccion_tipo_comp(cursor):
     return opcion, texto
 
 
+def eleccion_tipo_sin_todo():
+    """
+    Función que abre una pestaña en la pantalla escogida de la aplicación 
+    y da a elegir al usuario el tipo de producto que desea visualizar el estudio de sus reviews.
+
+    In:
+        None
+    Out:
+        opcion (str): tipo de producto escogido por el usuario
+    """
+    # Pestaña que da a elegir
+    opcion = st.selectbox(
+        "Elige una opción",
+        ["Video Games", "Toys and Games", "Digital Music", "Musical Instruments"])
+    
+    st.write("Has elegido:", opcion) # Nombrar opción escogida     
+    return opcion
+
+def summaries_tipos(collection, opcion):
+    """
+    Función que estudia la frecuencia que tiene cada palabra de todos los summaries de un tipo determinado.
+
+    In:
+        collection (Object): conexión a MySQL para realizar consultas en la base de datos
+    Out:
+        frecuencias (dict): diccionario que contiene palabra: su frecuencia en todos los summaries de ese tipo de producto.
+    """
+    resultados = collection.find({"categoria": opcion}, {"_id": 0, "summary": 1})
+    summaries = [doc["summary"] for doc in resultados if doc.get("summary")] # extraer unicamente el valor del campo, olvidarme del nombre "summary"
+
+    if not summaries: # condicion de seguridad
+        st.write("No hay summaries para la categoría seleccionada.")
+        return
+    
+    texto = " ".join(summaries).lower() # Unir todos los summaries en un único texto y asi solo hacer un regex
+
+    palabras = re.findall(r"[a-záéíóúñ]+", texto) # Extraer palabras mediante regex
+    palabras_validas = [p for p in palabras if len(p) > 3] # cumplir condicion de longitud mayor que tres
+
+    if not palabras_validas: # condicion de seguridad
+        st.write("No hay palabras válidas para generar la nube.")
+        return
+
+    frecuencias = Counter(palabras_validas) # Devuelve la frecuencia de cada palabra ordenadas de manera descendente
+
+    return frecuencias
+
+
 # FUNCIONES
 def mostrar_inicio():
     """
@@ -82,13 +137,12 @@ def mostrar_inicio():
     """
     st.title("App de visualización")
     st.write("Selecciona una opción en el menú lateral para ver las gráficas.")
-    st.write("Vista previa de los datos:")
-    #st.dataframe(df)
+    
 
 def evolucion_por_años(cursor):
     """
     Función que muestra la evolucion del número de reviews por año. 
-    Se da la opción a escoger el tipo de review.
+    Se da la opción a escoger el tipo de producto.
 
     In:
         cursor: conexión a MySQL para realizar consultas en la base de datos
@@ -151,7 +205,7 @@ def evolucion_por_años(cursor):
 def evolucion_popularidad(cursor):
     """
     Función que muestra la popularidad en orden descendiente de los articulos. 
-    Se da la opción a escoger el tipo de review.
+    Se da la opción a escoger el tipo de producto.
 
     In:
         cursor: conexión a MySQL para realizar consultas en la base de datos
@@ -214,7 +268,95 @@ def evolucion_popularidad(cursor):
         st.write ("No se ha recuperado ningún resultado en la consulta.")
 
 
-def histograma_nota():
+def histograma_nota(cursor):
+    """
+    Función que muestra un histograma con las notas que ha(n) obtenido todos los productos, los productos de una cierta clasificación
+    o incluso un único producto concreto.
+
+    In:
+        cursor: conexión a MySQL para realizar consultas en la base de datos
+
+    Out:
+        None
+    """
+    st.title("Histograma de las notas en función del número de reviews en cierto(s) producto(s).")
+    st.write("Visualización usando matplotlib.")
+
+    opcion, texto = eleccion_tipo_comp(cursor)
+
+    # Consulta en MySQL
+    if opcion == "TODO":
+        consulta = """
+        SELECT overall, COUNT(id_review)
+        FROM reviews
+        GROUP BY overall
+        ORDER BY overalL ASC;
+        """                 # sin condición de tipo de review
+        cursor.execute(consulta)
+
+    elif opcion == "Artículo individual" and texto:  # Artículo en concreto
+        consulta = """
+        SELECT overall, COUNT(id_review) as recuento
+        FROM reviews
+        WHERE asin=%s
+        GROUP BY overall
+        ORDER BY overall ASC;
+        """                 # con condición WHERE para el código del árticulo
+        cursor.execute(consulta, [texto])
+    
+    elif opcion != "Artículo individual": # los demás tipos
+        consulta = """
+        SELECT overall, COUNT(id_review) as recuento
+        FROM reviews r
+        INNER JOIN articulos a ON a.asin=r.asin
+        WHERE a.categoria=%s
+        GROUP BY overall
+        ORDER BY overall ASC;
+        """                 # con condición WHERE para el tipo de artículo
+        cursor.execute(consulta, [opcion])
+    
+    else: # No existen más opciones pero por si acaso
+        st.error("Se ha producido un caso no previsto.")
+        return
+    
+
+    resultado = cursor.fetchall() # Tupla de tuplas
+    # Para evitar errores si resultado está vacío
+    if resultado:
+        notas, recuentos = zip(*resultado) # desempaquetar
+    
+        # Comprobacion para que estén todas las notas posibles [1-5]
+        if len(notas) != 5:
+            diccionario = dict(zip(notas, recuentos))
+            diccionario = {i: diccionario.get(i, 0) for i in range(1, 6)} # 0 porque al no estar en la lista de notas significa que tiene asociadas 0 reseñas
+
+            notas, recuentos = zip(*diccionario.items())
+        
+            
+        fig, ax = plt.subplots()
+        ax.bar(notas, recuentos) # Histograma
+        
+        # Diseño
+        if opcion == "TODO":
+            ax.set_title("Histograma de las notas de todos los artículos.")
+        elif opcion == "Artículo individual" and texto:
+            ax.set_title(f"Histograma de las notas del artículo con identificador: {texto}.")
+        elif opcion != "Artículo individual":
+            ax.set_title(f"Histograma de las notas de los artículos clasificados como: {opcion}")
+
+        ax.set_xlabel("Notas")
+        ax.set_ylabel("Número de reviews")
+
+        st.pyplot(fig) # Mostrar figura dentro de streamlit
+    
+    
+    else:
+        notas, recuentos = [], []
+        st.write ("No se ha recuperado ningún resultado en la consulta.")
+
+
+# preguntar!!
+def evolucion_tiempo_categorias():
     """
     Función que muestra la evolucion del número de reviews por año. 
     Se da la opción a escoger el tipo de review.
@@ -225,7 +367,7 @@ def histograma_nota():
     Out:
         None
     """
-    st.title("Boxplot de goles por equipo")
+    st.title("Evolución de las reviews para todas las categorías a lo largo del tiempo.")
     st.write("Visualización usando matplotlib.")
 
     opcion, texto = eleccion_tipo_comp(cursor)
@@ -295,10 +437,10 @@ def histograma_nota():
         notas, recuentos = [], []
         st.write ("No se ha recuperado ningún resultado en la consulta.")
 
-def evolucion_tiempo_categorias():
+
+def histograma_usuario(cursor):
     """
-    Función que muestra la evolucion del número de reviews por año. 
-    Se da la opción a escoger el tipo de review.
+    Función que muestra un histograma que representa cuantos usuarios han publicado una cantidad de reviews. 
 
     In:
         cursor: conexión a MySQL para realizar consultas en la base de datos
@@ -306,46 +448,78 @@ def evolucion_tiempo_categorias():
     Out:
         None
     """
-    st.title("Boxplot de goles por equipo")
+    st.title("Histograma que representa cuantos usuarios han publicado una cantidad de reviews.")
     st.write("Visualización usando matplotlib.")
-    fig, ax = plt.subplots()
 
-    st.pyplot(fig)
-
-def histograma_usuario():
+    # Consulta en MySQL
+    consulta = """
+    SELECT n_reviews, COUNT(reviewerID) AS n_usuarios
+    FROM (
+        SELECT reviewerID, COUNT(id_review) AS n_reviews  -- cada usuario ha hecho n_reviews
+        FROM reviews
+        GROUP BY reviewerID
+    ) t
+    GROUP BY n_reviews
+    ORDER BY n_reviews ASC;
     """
-    Función que muestra la evolucion del número de reviews por año. 
-    Se da la opción a escoger el tipo de review.
+    cursor.execute(consulta)
+    
+    resultado = cursor.fetchall() # Tupla de tuplas
 
+    # Para evitar errores si resultado está vacío
+    if resultado:
+        n_reviews, n_usuarios = zip(*resultado) # desempaquetar
+    
+        fig, ax = plt.subplots()
+        ax.bar(n_reviews, n_usuarios) # Histograma
+        
+        # Diseño
+        ax.set_title("Histograma de reviews por usuario.")
+
+        ax.set_xlabel("Número de reviews.")
+        ax.set_ylabel("Número de usuarios que han hecho esa cantidad de reviews.")
+
+        st.pyplot(fig) # Mostrar figura dentro de streamlit
+
+    else:
+        n_reviews, n_usuarios = [], [] 
+        st.write ("No se ha recuperado ningún resultado en la consulta.")
+
+def nube_palabras(collection):
+    """
+    Función que muestra una nube de palabras según el tipo de productos elegido por el usuario. 
+    
     In:
-        cursor: conexión a MySQL para realizar consultas en la base de datos
+        collection: conexión a Mongo para realizar consultas en la base de datos
 
     Out:
         None
     """
-    st.title("Boxplot de goles por equipo")
-    st.write("Visualización usando matplotlib.")
-    fig, ax = plt.subplots()
+    global dict_frecuencias # para poder actualizar
 
-    st.pyplot(fig)
+    st.title("Nube de palabras")
+    st.write("Visualización usando wordcloud.")
 
-def nube_palabras():
-    """
-    Función que muestra la evolucion del número de reviews por año. 
-    Se da la opción a escoger el tipo de review.
+    opcion = eleccion_tipo_sin_todo()
 
-    In:
-        cursor: conexión a MySQL para realizar consultas en la base de datos
+    # Consulta en Mongo
+    if opcion in dict_frecuencias:                    # Ya ha sido estudiado
+        frecuencias = dict_frecuencias[opcion]
+    else:                                             # Se evita para optimizar el rendimiento
+        frecuencias = summaries_tipos(collection, opcion)
+        dict_frecuencias[opcion] = frecuencias # Almacenar para la próxima vez
 
-    Out:
-        None
-    """
-    st.title("Boxplot de goles por equipo")
-    st.write("Visualización usando matplotlib.")
+    if not frecuencias: # Ha saltado alguna condición de seguridad
+        return
 
+    # Crear nube
+    nube = WordCloud(width=800, height=400, background_color="white")
+    nube.generate_from_frequencies(frecuencias)
 
-
-    fig, ax = plt.subplots()
+    # Mostrar
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.imshow(nube, interpolation="bilinear")
+    ax.axis("off")
 
     st.pyplot(fig)
 
@@ -390,13 +564,13 @@ if __name__ == "__main__":
             elif opcion == "Popularidad de los artículos":
                 evolucion_popularidad(cursor)
             elif opcion == "Histograma por nota":
-                histograma_nota()
+                histograma_nota(cursor)
             elif opcion == "Reviews a lo largo del tiempo para todas las categorías":
-                evolucion_tiempo_categorias()
+                evolucion_tiempo_categorias(cursor)
             elif opcion == "Reviews por usuario":
-                histograma_usuario()
+                histograma_usuario(cursor)
             elif opcion == "Nube de palabras en función de la categoría":
-                nube_palabras()
+                nube_palabras(collection)
             elif opcion == "   .... ":
                 #funcion()
                 pass
