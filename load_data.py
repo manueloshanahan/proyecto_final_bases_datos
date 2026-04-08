@@ -215,6 +215,24 @@ def conexion_SQL():
             password=config.password, 
         )
 
+def conexion_db_SQL():
+    """
+    Función encargada de generar la conexión con el servidor de MySQL y de cargar la base de datos establecida, utilizando los datos que se encuentran en el configuracion.py
+    
+    Args:
+    - None
+    
+    Returns:
+    - conexion (connect): es la conexion con el servidor de MYsql y la base de datos asociada, ya con las credenciales indicadas, para su posterior uso
+    """
+    return pymysql.connect(
+            host=config.host, 
+            user=config.user,
+            password=config.password,
+            database= config.nombre_bd_sql
+        )
+
+
 
 
 if __name__ == "__main__":
@@ -228,7 +246,7 @@ if __name__ == "__main__":
         client = conexion_mongo()
         conexion_mysql = conexion_SQL()
         
-        insertar_datos(client, conexion_mysql, config.nombre_bd_mongo, config.coleccion_mongo, config.nombre_bd_sql, lista_rutas)
+        # insertar_datos(client, conexion_mysql, config.nombre_bd_mongo, config.coleccion_mongo, config.nombre_bd_sql, lista_rutas)
         
     except Exception as e:
         print("Error al conectar con MySQL o MongoDB:", e)
