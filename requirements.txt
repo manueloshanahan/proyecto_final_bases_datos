@@ -3,3 +3,4 @@ streamlit
 wordcloud
 collections
 re
+numpy
