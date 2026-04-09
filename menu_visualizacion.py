@@ -63,15 +63,16 @@ def eleccion_tipo_comp(cursor):
     if opcion == "Artículo individual":
         texto = st.text_input("Escribe el identificador del artículo cuyas notas deseas consultar:").strip() # Pedir el input del asin
         
-        # Comprobación de existencia
-        consulta = "SELECT asin FROM reviews WHERE asin = %s LIMIT 1;"
-        cursor.execute(consulta, [texto])
-        resultado = cursor.fetchone()
+        if texto: # cuando ya se ha introducido el código del artículo
+            # Comprobación de existencia
+            consulta = "SELECT asin FROM reviews WHERE asin = %s LIMIT 1;"
+            cursor.execute(consulta, [texto])
+            resultado = cursor.fetchone()
 
-        if not resultado:
-            st.write("El artículo no existe")
-            st.write("Elige otra opción o otro código de artículo válido.")
-            texto = None # actualizamos variable
+            if not resultado:
+                st.write("El artículo no existe")
+                st.write("Elige otra opción o otro código de artículo válido.")
+                texto = None # actualizamos variable
     
     
     return opcion, texto
@@ -444,7 +445,6 @@ def histograma_usuario(cursor):
 
     In:
         cursor: conexión a MySQL para realizar consultas en la base de datos
-
     Out:
         None
     """
@@ -522,6 +522,34 @@ def nube_palabras(collection):
     ax.axis("off")
 
     st.pyplot(fig)
+
+
+def notas_usuario(cursor):
+    """
+    Función que muestra un histograma de las notas que ha puesto el usuario introducido por el usuario.
+
+    In:
+        cursor: conexión a MySQL para realizar consultas en la base de datos
+    Out:
+        None
+    """
+    st.title("Notas puestas por un usuario.")
+    st.write("Visualización usando matplotplib.")
+
+    # Pedir el input del reviewerID
+    id = st.text_input("Escribe el identificador del usuario cuyas notas puestas deseas analizar:").strip()
+
+    if id: # cuando ya se ha introducido 
+        # Comprobación de existencia
+        consulta = "SELECT reviewerID FROM reviews WHERE reviewerID = %s LIMIT 1;"
+        cursor.execute(consulta, [id])
+        resultado = cursor.fetchone()
+
+        if not resultado:
+            st.write("El usuario introducido no existe.")
+            st.write("Elige otra opción o otro código de artículo válido.")
+            texto = None # actualizamos variable
+
 
 def salida():
     global client, conexion_mysql
