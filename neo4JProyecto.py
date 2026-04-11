@@ -445,11 +445,12 @@ def eleccion_usuario():
         n_articulos (int): numero de articulos aleatorios.
     """
 
-    print("Tipos de artículo: " + ", ".join(TIPOS_VALIDOS_PROD))
+    print("Tipos de artículo: " + ", ".join(TIPOS_VALIDOS_PROD.values()))
 
     while True:
         tipo = input("Introduzca el tipo de artículo: ").strip()
-        if tipo in TIPOS_VALIDOS_PROD:
+        if tipo in TIPOS_VALIDOS_PROD.keys:
+            tipo = TIPOS_VALIDOS_PROD[tipo]
             break
         print("El tipo de artículo introducido es incorrecto.\n")
 
