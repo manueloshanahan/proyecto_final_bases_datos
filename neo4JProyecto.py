@@ -628,8 +628,8 @@ if __name__ == "__main__":
 
 
         with conexion_mysql.cursor() as cursor:
-            #primera_funcionalidad(conexion_mysql, cursor) # 1
-            segunda_funcionalidad(cursor)
+            primera_funcionalidad(conexion_mysql, cursor) # 1
+            #segunda_funcionalidad(cursor)
 
 
     except Exception as e:
