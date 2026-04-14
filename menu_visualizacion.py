@@ -808,6 +808,8 @@ def histograma_notas_usuario(cursor):
             resultado_comun = cursor.fetchall()           # Resultado de todos los usuarios
             
             notas_c, recuentos_c = zip(*resultado_comun)                      # desempaquetar
+            notas_c = [float(n) for n in notas_c]
+            recuentos_c = [int(r) for r in recuentos_c]
             notas_c, recuentos_c = comprobacion_notas(notas_c, recuentos_c)   # Comprobacion para que estén todas las notas posibles [1-5]
             
             metricas(ids, notas_c, recuentos_c)
