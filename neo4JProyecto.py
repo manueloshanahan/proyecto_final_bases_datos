@@ -15,7 +15,7 @@ import os
 from neo4j import GraphDatabase
 
 # VARIABLES GLOBALES
-RUTA = "C:/Users/lucia/OneDrive/Escritorio/2 iMat/2cuatri/BBDD/practicas/proyecto/proyecto_final_bases_datos"
+RUTA = "C:/Users/manut/OneDrive/Escritorio/2º/BD/proyecto_final_bases_datos"
 
 NOMBRE_SIMILITUDES_PEARSON = "similitudes_pearson.txt"
 RUTA_SIMILITUDES_PEARSON = os.path.join(RUTA, NOMBRE_SIMILITUDES_PEARSON)
@@ -59,8 +59,8 @@ TIPOS_VALIDOS_PROD = {
 
 
 # Neo4j
-uri = "bolt://localhost:7687"
-driver =GraphDatabase.driver(uri, auth=("neo4j", "alumnoimat"))
+uri = "neo4j://localhost:7687"
+driver =GraphDatabase.driver(uri, auth=("neo4j", "Manu6488"))
 
 # FUNCIONES GENERALES
 def eliminar_anterior():
@@ -206,8 +206,11 @@ def creacion_indice(cursor, conexion_mysql):
     CREATE INDEX datos_pearson ON reviews
     (reviewerID, asin, overall);
     """
-    cursor.execute(consulta)
-    conexion_mysql.commit()
+    try:
+        cursor.execute(consulta)
+        conexion_mysql.commit()
+    except Exception as e:
+        pass
 
 def eliminar_indice(cursor, conexion_mysql):
     """
@@ -223,8 +226,14 @@ def eliminar_indice(cursor, conexion_mysql):
     consulta = """
     DROP INDEX datos_pearson ON reviews;
     """
-    cursor.execute(consulta)
-    conexion_mysql.commit()
+    try:
+        #apagamos un segundo las claves foráneas y sus restricciones para que no prohiba eliminar el índice (después de depurar errores)
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 0;")
+        cursor.execute(consulta)
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 1;")
+        conexion_mysql.commit()
+    except Exception as e:
+        pass
 
 def similitudes_pearson(conexion_mysql, cursor, u_mas_reviews):
     """
@@ -449,7 +458,7 @@ def eleccion_usuario():
 
     while True:
         tipo = input("Introduzca el tipo de artículo: ").strip()
-        if tipo in TIPOS_VALIDOS_PROD.keys:
+        if tipo in TIPOS_VALIDOS_PROD.keys():
             tipo = TIPOS_VALIDOS_PROD[tipo]
             break
         print("El tipo de artículo introducido es incorrecto.\n")
@@ -619,6 +628,213 @@ def creacion_usuarios_review (asin, reviewerID, overall, reviewTime):
         session.run(consulta, asin_id = asin, reviewer_ID=reviewerID, nota= overall, tiempo = reviewTime)
 
 
+
+
+def obtener_usuarios_multicategoria(cursor):
+    """
+    Realiza la consulta SQL para los primeros 400 usuarios por nombre y 
+    filtra en Python aquellos que tienen más de una categoría distinta.
+    """
+    # Obtenemos a los primeros 400 usuarios ordenados por nombre alfabético,
+    # junto con las categorías que han consumido y cuántos artículos de cada una.
+    consulta = """
+    SELECT us.reviewerID, a.categoria, COUNT(r.asin) AS cantidad
+    FROM (SELECT reviewerID
+    FROM usuarios
+    WHERE reviewerName IS NOT NULL
+    ORDER BY reviewerName ASC
+    LIMIT 400) AS us
+    LEFT JOIN reviews r ON us.reviewerID = r.reviewerID
+    LEFT JOIN articulos a ON r.asin = a.asin
+    GROUP BY us.reviewerID, a.categoria;
+    """
+    cursor.execute(consulta)
+    resultados = cursor.fetchall()
+
+    # Vamos mirando usuario a usuario cuántos tienen reviews en más de una categoría para posteriormente filtrarlos
+    diccionario_usuarios = {}
+    for reviewerID, categoria, cantidad in resultados:
+        if reviewerID not in diccionario_usuarios: #si ya está el reviewerID es porque vamos a añadir una nueva categoría
+            diccionario_usuarios[reviewerID] = {}
+        diccionario_usuarios[reviewerID][categoria] = cantidad
+    #es decir, terminamos teniendo dos diccionarios así: diccionario_usuario = {reviewerID: {categoria1: cantidad, categoria:2: cantidad}}
+    
+
+    # Filtramos para quedarnos SOLAMENTE con los que tienen > de 1 categoría almacenada
+    datos_para_neo4j = []
+    for usuario, categorias in diccionario_usuarios.items(): #donde categorias sabemos que es otro diccionario
+        if len(categorias) > 1: 
+            for categ, cant in categorias.items():
+                datos_para_neo4j.append({
+                    "id_u": usuario, 
+                    "categoria": categ, 
+                    "cantidad": cant
+                })
+                
+    return datos_para_neo4j
+
+def restriccion_nodos_uc():
+    """
+    Asegura que los nodos de Categoría también sean únicos, y también vuelve a recordarle que los usuarios sean únicos
+    """
+    with driver.session() as session:
+        # RESTRICCIÓN PARA EL USUARIO de nuevo por si acaso
+        consulta1 = """
+        CREATE CONSTRAINT unique_user IF NOT EXISTS
+        FOR (user:USUARIO) REQUIRE user.id IS UNIQUE
+        """
+        session.run(consulta1)
+
+        # RESTRICCIÓN PARA LA CATEGORÍA
+        consulta2 = """
+        CREATE CONSTRAINT unique_category IF NOT EXISTS
+        FOR (cat:CATEGORIA) REQUIRE cat.nombre IS UNIQUE
+        """
+        session.run(consulta2)
+
+def cargar_categorias_neo4j(datos_lote):
+    """
+    Recibe la lista de diccionarios filtrada y la inyecta en Neo4j de forma masiva.
+    """
+    eliminar_anterior() # Partimos de una base de datos limpia
+    restriccion_nodos_uc() # Añadimos la restricción de categoría
+    
+    with driver.session() as session:
+        consulta = """
+        MERGE (u:USUARIO {id: $id_u})
+        MERGE (c:CATEGORIA {nombre: $categoria})
+        MERGE (u)-[:CONSUME {cantidad: $cantidad}]->(c)
+        """
+        
+        for fila in datos_lote: #fila recordemos que es un diccionario dentro de la lista
+            session.run(consulta, 
+                        id_u=fila["id_u"], 
+                        categoria=fila["categoria"], 
+                        cantidad=fila["cantidad"])
+
+
+
+
+def tercera_funcionalidad(cursor):
+    """
+    Función que selecciona los 400 primeros usuarios ordenados por nombre, 
+    filtra aquellos que han consumido más de un tipo de artículo y los carga en Neo4j.
+    """
+    datos_filtrados = obtener_usuarios_multicategoria(cursor)
+    
+    if not datos_filtrados:
+        print("No se encontraron usuarios que cumplan las condiciones")
+        return
+
+    cargar_categorias_neo4j(datos_filtrados)
+    
+    print("Carga de datos del apartado 4.3 concluida ")
+
+
+
+
+# APARTADO 4.4
+
+def obtener_articulos_populares(cursor):
+    """
+    SQL: Busca los 5 ASINs con más reviews dentro del límite de 40. 
+    """
+    # Para no hacer dos búsquedas aisladas en MySQL, se puede incluir toda la búsqueda en una sola query
+    # Idealmente se podría crear una vista que realmente crease la tabla temporal con los 5 artículos más populares
+    # De igual manera, tanto con FROM como con JOIN se nos permite hacer este peqieño filtrado, y funciona genial
+    consulta_asins = """
+    SELECT r.reviewerID, r.asin
+    FROM reviews r
+    JOIN (SELECT asin
+          FROM reviews
+          GROUP BY asin
+          HAVING COUNT(id_review) < 40
+          ORDER BY COUNT(id_review) DESC
+          LIMIT 5
+         ) AS top_articulos ON r.asin = top_articulos.asin;
+      """
+    cursor.execute(consulta_asins)
+    return cursor.fetchall()
+
+
+def obtener_intersecciones_usuarios(cursor, usuarios):
+    """
+    SQL: Calcula cuántos artículos (en total) tienen en común cada par de usuarios del pool. 
+    """
+    if len(usuarios) < 2:
+        return []
+
+    # Para optimizar, filtramos solo los pares de usuarios que nos interesan
+    formato_in = ', '.join(['%s'] * len(usuarios))
+    consulta = f"""
+    SELECT r1.reviewerID, r2.reviewerID, COUNT(r1.asin) as comunes
+    FROM reviews r1
+    JOIN reviews r2 ON r1.asin = r2.asin
+    WHERE r1.reviewerID < r2.reviewerID AND r1.reviewerID IN ({formato_in})
+          AND r2.reviewerID IN ({formato_in})
+    GROUP BY r1.reviewerID, r2.reviewerID;
+    """
+    cursor.execute(consulta, usuarios + usuarios) 
+    return cursor.fetchall() #nos devolverá parejas de IDs y las relaciones que tienen
+
+
+def cargar_populares_neo4j(prod_usuarios, afinidades):
+    """
+    Carga nodos y relaciones iterando en Python (sin UNWIND).
+    """
+    eliminar_anterior() 
+    restriccion_nodos_ua() 
+
+    with driver.session() as session:
+        # Creamos Relaciones Usuario -> Producto
+        query_voto = """
+        MERGE (u:USUARIO {id: $id_u})
+        MERGE (p:PRODUCTO {id: $id_p})
+        MERGE (u)-[:PUNTUO]->(p)
+        """
+        for u, p in prod_usuarios:
+            session.run(query_voto, id_u=u, id_p=p)
+
+        # Creamos Relaciones Usuario <-> Usuario (Común)
+        query_comun = """
+        MATCH (u1:USUARIO {id: $id_u1}), (u2:USUARIO {id: $id_u2})
+        MERGE (u1)-[:COMUN {articulos: $cant}]-(u2)
+        """
+        for u1, u2, cant in afinidades:
+            session.run(query_comun, id_u1=u1, id_u2=u2, cant=cant)
+
+
+def cuarta_funcionalidad(cursor):
+    """
+    Selecciona los 5 artículos con más reviews (pero menos de 40), 
+    los carga en Neo4j con sus usuarios y calcula artículos en común entre ellos.
+    """
+    
+    # Obtengo los productos populares y sus usuarios
+    productos_y_usuarios = obtener_articulos_populares(cursor)
+    
+    if not productos_y_usuarios:
+        print("No se han encontrado datos para esta consulta.")
+        return
+
+    # Extraemos la lista de usuarios únicos para calcular afinidades
+    conjunto_usuarios = set()
+    for fila in productos_y_usuarios:
+        usuario = fila[0]
+        conjunto_usuarios.add(usuario)
+
+    lista_usuarios = list(conjunto_usuarios)
+
+    # Calculo los artículos en común entre esos usuarios
+    relaciones_comun = obtener_intersecciones_usuarios(cursor, lista_usuarios)
+
+    # Hacemos la carga en Neo4J
+    cargar_populares_neo4j(productos_y_usuarios, relaciones_comun)
+    
+    # Mensaje de finalización según el enunciado
+    print("Carga en Neo4J para el apartado 4.4 finalizada.") 
+
+
 if __name__ == "__main__":
     try:
         client = conexion_mongo()
@@ -629,8 +845,10 @@ if __name__ == "__main__":
 
 
         with conexion_mysql.cursor() as cursor:
-            primera_funcionalidad(conexion_mysql, cursor) # 1
+            #primera_funcionalidad(conexion_mysql, cursor) # 1
             #segunda_funcionalidad(cursor)
+            #tercera_funcionalidad(cursor)
+            cuarta_funcionalidad(cursor)
 
 
     except Exception as e:

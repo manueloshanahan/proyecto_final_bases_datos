@@ -14,6 +14,7 @@ def insertar_datos(client, conexion, nombre_bd_mongo, nombre_colec, nombre_bd_my
     Por el otro lado, para MongoDB, se le define la colección reviews dentro de comercio, que contendrá también parte de estos reviews.
     Por último, la función indica qué inserciones hay que hacer en cada tabla y va recorriendo cada archivo, aislando la información según considera pertinente
     e insertando cada review en la base de datos, para ambos servidores. Además cambia el formato y gestiona errores en caso de que sea necesario.
+    Cade destacar que las inserciones las realiza por lotes (batches), para acelerar el proceso, y cada 100000 datos realiza un commit.
     
     Args:
     - client: contiene la conexión-cliente perteneciente a MongoDB, que nos da la posibilidad de gestionar las colecciones y bases de datos de este servidor
@@ -73,7 +74,7 @@ def insertar_datos(client, conexion, nombre_bd_mongo, nombre_colec, nombre_bd_my
                         CREATE TABLE IF NOT EXISTS reviews (
                             id_review INT NOT NULL PRIMARY KEY, 
                             reviewerID varchar(150),
-                            asin varchar(150),
+                            asin varchar(180),
                             helpful_1 INT,
                             helpful_2 INT,
                             overall FLOAT,
@@ -113,6 +114,13 @@ def insertar_datos(client, conexion, nombre_bd_mongo, nombre_colec, nombre_bd_my
             set_reviewers = set()
             set_unix = set()
             set_asin = set()
+            
+            #para hacer la carga de datos más rápida, vamos a crear una lista por cada elemento en el que vayamos a insertar información
+            datos_usuarios = []
+            datos_fechas = []
+            datos_articulos = []
+            datos_reviews = []
+            datos_coleccion = []
             
             for ruta, categoria in lista_rutas:    
                 with open(ruta, 'r', encoding="UTF-8") as archivo:
@@ -158,20 +166,35 @@ def insertar_datos(client, conexion, nombre_bd_mongo, nombre_colec, nombre_bd_my
                                      "summary": review_dicc.get("summary", None)}
                         
                         if reviewerID is not None and reviewerID not in set_reviewers:
-                            cursor.execute(sql_insercion_us, tupla_user)
+                            datos_usuarios.append(tupla_user)
                             set_reviewers.add(reviewerID)
                         
                         if unixReviewTime is not None and unixReviewTime not in set_unix:
-                            cursor.execute(sql_insercion_fecha, tupla_fecha)
+                            datos_fechas.append(tupla_fecha)
                             set_unix.add(unixReviewTime)
                         
                         if asin is not None and asin not in set_asin:
-                            cursor.execute(sql_insercion_articulos, (asin, categoria))
+                            datos_articulos.append((asin, categoria))
                             set_asin.add(asin)
-        
-                        cursor.execute(sql_insercion_reviews, tupla_reviews) #hacemos la inserción en la tabla grande despues de haber rellenado las relaciones más pequeñas, ya que queremos que tenga un foreing key a esa relación
- 
-                        coleccion.insert_one(documento) #insertamos el documento en la colección de Mongo
+
+                        datos_reviews.append(tupla_reviews)
+
+                        datos_coleccion.append(documento)
+                        
+                        if len(datos_reviews) >= 15000:
+                            cursor.executemany(sql_insercion_us, datos_usuarios)
+                            cursor.executemany(sql_insercion_fecha, datos_fechas)
+                            cursor.executemany(sql_insercion_articulos, datos_articulos)
+                            cursor.executemany(sql_insercion_reviews, datos_reviews) #hacemos la inserción en la tabla grande despues de haber rellenado las relaciones más pequeñas, ya que queremos que tenga un foreing key a esa relación 
+                            
+                            coleccion.insert_many(datos_coleccion) #insertamos los documentos en la colección de Mongo
+                            
+                            datos_usuarios.clear()
+                            datos_fechas.clear()
+                            datos_articulos.clear()
+                            datos_reviews.clear()
+                            datos_coleccion.clear() 
+                        
 
                         cont += 1
                         if cont >= 1000000:
@@ -180,7 +203,21 @@ def insertar_datos(client, conexion, nombre_bd_mongo, nombre_colec, nombre_bd_my
 
                         id_review += 1
                         
-                conexion.commit()
+                        
+            if len(datos_reviews) > 0:
+                cursor.executemany(sql_insercion_us, datos_usuarios)
+                cursor.executemany(sql_insercion_fecha, datos_fechas)
+                cursor.executemany(sql_insercion_articulos, datos_articulos)
+                cursor.executemany(sql_insercion_reviews, datos_reviews)
+                coleccion.insert_many(datos_coleccion)
+                
+                datos_usuarios.clear()
+                datos_fechas.clear()
+                datos_articulos.clear()
+                datos_reviews.clear()
+                datos_coleccion.clear() 
+                       
+            conexion.commit()
                 
     except Exception as e:
         print("Ha surgido un error creando la base de datos y su tabla: ", e)
@@ -246,7 +283,7 @@ if __name__ == "__main__":
         client = conexion_mongo()
         conexion_mysql = conexion_SQL()
         
-        # insertar_datos(client, conexion_mysql, config.nombre_bd_mongo, config.coleccion_mongo, config.nombre_bd_sql, lista_rutas)
+        insertar_datos(client, conexion_mysql, config.nombre_bd_mongo, config.coleccion_mongo, config.nombre_bd_sql, lista_rutas)
         
     except Exception as e:
         print("Error al conectar con MySQL o MongoDB:", e)

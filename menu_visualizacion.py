@@ -1,3 +1,5 @@
+# LUCÍA RAVENTÓS GONZALVO Y MANUEL O'SHANAHAN DELGADO-TARAMONA 2ºIMAT B
+
 """
 Fichero que crea una aplicación mediante la librería Streamlit que permite al usuario 
 elegir distintas visualizaciones y que el programa no termine hasta que elija "salir" (basta con cerrar la pestaña).
@@ -14,6 +16,7 @@ import re
 from collections import Counter
 from wordcloud import WordCloud
 import numpy as np
+import pandas as pd
 
 
 # Configuración general de la página
@@ -22,16 +25,16 @@ st.set_page_config(page_title="Menú de visualización", layout="wide")
 # VARIABLES GLOBALES
 dict_frecuencias = {}
 
-# FUNCIONES AUXILIARES
+# FUNCIONES AUXILIARES (se usarán recurrentemente)
 def eleccion_tipo():
     """
     Función que abre una pestaña en la pantalla escogida de la aplicación 
     y da a elegir al usuario el tipo de producto, o incluso todos, que desea visualizar el estudio de sus reviews.
 
-    In:
+    Args:
         None
-    Out:
-        opcion (str): tipo de producto escogido por el usuario
+    Returns:
+    - opcion (str): tipo de producto escogido por el usuario
     """
     # Pestaña que da a elegir
     opcion = st.selectbox(
@@ -47,10 +50,10 @@ def eleccion_tipo_comp():
     Función que abre una pestaña en la pantalla escogida de la aplicación 
     y da a elegir al usuario el tipo de producto o un artículo en concreto cuyo estudio de sus reviews desea visualizar.
 
-    In:
+    Args:
         None
-    Out:
-        opcion (str): tipo de producto escogido por el usuario
+    Returns:
+    - opcion (str): tipo de producto escogido por el usuario
     """
     # Elección
     opcion = st.selectbox(
@@ -61,22 +64,29 @@ def eleccion_tipo_comp():
     
     return opcion
 
+
 def intro_codigo_articulo(cursor):
     """
     Función que abre una pestaña y pide al usuario que introduzca el código del artículo que desea visualizar.
     Comprueba que el artículo existe y si no es así, se le informa al usuario y se le da la opción de elegir otro código o incluso otro tipo de visualización.
     
-    Input:
-        cursor: conexión a MySQL para realizar consultas en la base de datos
-    Output:
-        texto (str): Input del usuario con el código del artículo que desea visualizar, o None si no se ha introducido nada o el artículo no existe.
+    Args:
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    Returns:
+    - texto (str): Input del usuario con el código del artículo que desea visualizar, o None si no se ha introducido nada o el artículo no existe.
     """
+    
     texto = None # Inicializamos variable
-    texto = st.text_input("Escribe el identificador del artículo cuyas notas deseas consultar:").strip() # Pedir el input del asin
+    texto = st.text_input("Escribe el identificador del artículo cuyas notas deseas consultar:").strip() # Pedir el identificador de artículo (asin)
     
     if texto: # cuando ya se ha introducido el código del artículo
         # Comprobación de existencia
-        consulta = "SELECT asin FROM reviews WHERE asin = %s LIMIT 1;"
+        consulta = """
+        SELECT asin 
+        FROM reviews 
+        WHERE asin = %s 
+        LIMIT 1;
+        """
         cursor.execute(consulta, [texto])
         resultado = cursor.fetchone()
 
@@ -87,16 +97,17 @@ def intro_codigo_articulo(cursor):
 
     return texto
 
-
+#función similar a la anterior pero en esta no se incluye la opción de TODO
 def eleccion_tipo_sin_todo():
     """
     Función que abre una pestaña en la pantalla escogida de la aplicación 
     y da a elegir al usuario el tipo de producto que desea visualizar el estudio de sus reviews.
 
-    In:
-        None
-    Out:
-        opcion (str): tipo de producto escogido por el usuario
+    Args:
+    - None
+    
+    Returns:
+    - opcion (str): tipo de producto escogido por el usuario
     """
     # Pestaña que da a elegir
     opcion = st.selectbox(
@@ -106,16 +117,20 @@ def eleccion_tipo_sin_todo():
     st.write("Has elegido:", opcion) # Nombrar opción escogida     
     return opcion
 
+
+### FUNCIONES PARA RESOLVER LOS EJERCICIOS
+#esta función se utilizará especialmente para el wordcloud (es de las más complejas)
 def summaries_tipos(collection, opcion):
     """
-    Función que estudia la frecuencia que tiene cada palabra de todos los summaries de un tipo determinado.
+    Función que estudia la frecuencia que tiene cada palabra de todos los summaries de un tipo determinado, las consultas las hará mediante MongoDB
 
-    In:
-        collection (Object): conexión a MySQL para realizar consultas en la base de datos
-    Out:
-        frecuencias (dict): diccionario que contiene palabra: su frecuencia en todos los summaries de ese tipo de producto.
+    Args:
+    - collection (Object): conexión a MySQL para realizar consultas en la base de datos
+    
+    Returns:
+    - frecuencias (dict): diccionario que contiene palabra y su frecuencia en todos los summaries de ese tipo de producto.
     """
-    resultados = collection.find({"categoria": opcion}, {"_id": 0, "summary": 1})
+    resultados = collection.find({"categoria": opcion}, {"_id": 0, "summary": 1}) #filtramos para quedarnos sólo con los summaries
     summaries = [doc["summary"] for doc in resultados if doc.get("summary")] # extraer unicamente el valor del campo, olvidarme del nombre "summary"
 
     if not summaries: # condicion de seguridad
@@ -138,12 +153,13 @@ def summaries_tipos(collection, opcion):
 
 def consultas_notas_usuarios(cursor, ids):
     """
-    Función que realiza la consulta en MySQL para obtener las notas puestas por un usuario o varios usuarios.
+    Función que realiza la consulta en MySQL para obtener las notas puestas por un usuario o varios usuarios (nuestra consulta extra)
     
-    In:
-        cursor: conexión a MySQL para realizar consultas en la base de datos
-        ids (list): lista con los identificadores de los usuarios que se quieren analizar
-    Out:
+    Args:
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    - ids (list): lista con los identificadores de los usuarios que se quieren analizar
+    
+    Returns:
         None
     """
      # Caso base
@@ -163,6 +179,7 @@ def consultas_notas_usuarios(cursor, ids):
         """                 # con condición WHERE para el código del árticulo
         cursor.execute(consulta, [id])
     
+    
     else: # Varios usuarios, se muestra un histograma con la media de las notas puestas por cada usuario
 
         placeholders = ", ".join(["%s"] * len(ids)) # Se crean tantos placeholders como ids haya. Tipo: ["%s", "%s", "%s"] para len = 3
@@ -177,6 +194,7 @@ def consultas_notas_usuarios(cursor, ids):
         ORDER BY overall;
         """
         cursor.execute(consulta, ids)
+
 
 def comprobacion_notas(notas, recuentos):
     """
@@ -808,6 +826,8 @@ def histograma_notas_usuario(cursor):
             resultado_comun = cursor.fetchall()           # Resultado de todos los usuarios
             
             notas_c, recuentos_c = zip(*resultado_comun)                      # desempaquetar
+            notas_c = [float(n) for n in notas_c]
+            recuentos_c = [int(r) for r in recuentos_c]
             notas_c, recuentos_c = comprobacion_notas(notas_c, recuentos_c)   # Comprobacion para que estén todas las notas posibles [1-5]
             
             metricas(ids, notas_c, recuentos_c)
@@ -840,6 +860,58 @@ def histograma_notas_usuario(cursor):
 
         else:                   # Solo un usuario
             comportamiento_por_usuario(cursor, ids[0])    
+
+
+# QUINTA PARTE (considero oportuno introducirlo aquí)
+def articulos_populares_no_consumidos(cursor):
+    st.title("Listado de los 10 artículos más populares no consumidos ")
+
+    st.write("Se requiere el ID específico de un usuario y un tipo de categoría para poder analizar en su caso cuales son los 10 artículos más populares que el usuario no ha valorado")
+    # Pedir el input del reviewerID
+    reviewer_id = st.text_input("Escribe el identificador del usuario (sin comillas) cuyos artículos consumidos desees analizar ").strip()
+
+    opciones_categoria = ["Video Games", "Toys and Games", "Digital Music", "Musical Instruments"]
+    categoria = st.selectbox("Selecciona la categoría de artículos por los que filtrar:", opciones_categoria)
+    categoria = eleccion_tipo_sin_todo()
+    
+    if st.button("Generar Recomendaciones"):
+        if reviewer_id: #es decir, que el usuario haya puesto un ID válido
+            consulta = """
+            SELECT r.asin, COUNT(r.id_review) AS num_reviews
+            FROM reviews r
+            JOIN articulos art ON r.asin = art.asin
+            WHERE art.categoria = %s 
+            AND r.asin NOT IN (SELECT asin
+                            FROM reviews
+                            WHERE reviewerID = %s)
+            GROUP BY r.asin
+            ORDER BY num_reviews DESC
+            LIMIT 10
+            """
+            try: 
+                cursor.execute(consulta, (categoria, reviewer_id))
+                resultado = cursor.fetchall()
+                
+                if resultado: #mostramos en streamlit los 10 artículos
+
+                        # Hacemos un dataframe con los resultados (pandas interpreta perfectamente el restulado del cursor)
+                        df = pd.DataFrame(resultado, columns=["ID de artículo más popular", "Número de Reviews"])
+                        
+                        df.index = df.index + 1 #esta línea es pura decoración, para que los índices se muestren del 1 al 10
+                        
+                        st.success(f"Se han encontrado las reviews para el usuario {reviewer_id} sobre productos del tipo {categoria}")
+                        
+                        # Dibujamos la tabla en Streamlit
+                        st.dataframe(df, width='stretch') 
+            
+                else:
+                    st.warning("No se encontraron artículos para esta combinación o el usuario no existe.")
+            
+            except Exception as err:
+                st.error(f"Error a la hora de buscar la información en SQL: {err}")
+        
+        else:
+            st.write("Por favor, inserte un ID de un reviewer válido")
 
 
 def salida():
@@ -875,6 +947,7 @@ if __name__ == "__main__":
                 "Reviews por usuario",
                 "Nube de palabras en función de la categoría",
                 "Notas por usuario",
+                "Artículos populares no consumidos",
                 "SALIDA"
             ]
         )
@@ -897,6 +970,8 @@ if __name__ == "__main__":
                 nube_palabras(collection)
             elif opcion == "Notas por usuario":
                 histograma_notas_usuario(cursor)
+            elif opcion == "Artículos populares no consumidos":
+                articulos_populares_no_consumidos(cursor)
             elif opcion == "SALIDA":
                 salida()
 
