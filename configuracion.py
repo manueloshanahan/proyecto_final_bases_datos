@@ -12,6 +12,14 @@ host = "localhost"
 user = "root"
 password = "Manutito64pro." 
 
+# CONEXIÓN NEO4J
+uri = "neo4j://localhost:7687"
+neo4j_user = "neo4j"
+neo4j_password = "Manu6488"
+
+
+num_usuarios_y_similitudes = 30 #definimos aquí el valor por si posteriormente se quiere cambiar
+
 #RUTAS DE LOS FICHEROS
 ruta_juegos = "C:/Users/manut/data/Video_Games_5.json"
 ruta_juguetes = "C:/Users/manut/data/Toys_and_Games_5.json"

@@ -1,75 +1,44 @@
+# LUCÍA RAVENTÓS GONZALVO Y MANUEL O'SHANAHAN DELGADO-TARAMONA 2ºIMAT B
+
 """
-Fichero que contiene un menú con las siguientes opciones:
-    1. Obtener similitudes entre usuarios y mostrar los enlaces en Neo4J
-    2. Obtener enlaces entre usuarios y artículos
-    3. Obtener algunos usuarios que han visto más de un determinado tipo de artículo
-    4. Artículos populares y artículos en común entre usuarios
-
-
-NOTA: Para poder ejecutar este fichero, se debe tener la aplicación Neo4j abierta. En el caso contrario, saltará error.
+NOTA: Para poder ejecutar este fichero, se debe tener la aplicación Neo4j abierta y el docker funcionando. En el caso contrario, saltará error.
 """
 # Importaciones
 from load_data import conexion_db_SQL, conexion_mongo
-from configuracion import nombre_bd_mongo, coleccion_mongo
+from configuracion import nombre_bd_mongo, coleccion_mongo, uri, neo4j_user, neo4j_password, num_usuarios_y_similitudes
 import os
 from neo4j import GraphDatabase
 
-# VARIABLES GLOBALES
-RUTA = "C:/Users/manut/OneDrive/Escritorio/2º/BD/proyecto_final_bases_datos"
-
-NOMBRE_SIMILITUDES_PEARSON = "similitudes_pearson.txt"
-RUTA_SIMILITUDES_PEARSON = os.path.join(RUTA, NOMBRE_SIMILITUDES_PEARSON)
-
-NOMBRE_ARTICULO_POR_USUARIOS = "articulo_por_usuarios.txt"
-RUTA_ARTICULO_POR_USUARIOS = os.path.join(RUTA, NOMBRE_ARTICULO_POR_USUARIOS)
-
-# primera parte: Número de usuarios con más reviews que se desea conocer
-N_U_MAS_REVIEWS = 30  
 
 # segunda parte
-TIPOS_VALIDOS_PROD = {
+tipos_articulos_validos = {
     "video games": "Video Games",
-    "Video Games": "Video Games",
     "video game": "Video Games",
-    "Video Game": "Video Games",
     "videojuegos": "Video Games",
-    "Videojuegos": "Video Games",
 
     "toys and games": "Toys and Games",
-    "Toys and Games": "Toys and Games",
     "toys": "Toys and Games",
-    "Toys": "Toys and Games",
     "juguetes": "Toys and Games",
-    "Juguetes": "Toys and Games",
 
     "digital music": "Digital Music",
-    "Digital Music": "Digital Music",
     "music": "Digital Music",
-    "Music": "Digital Music",
     "musica digital": "Digital Music",
-    "Música digital": "Digital Music",
+    "música digital": "Digital Music", # Mantenemos la tilde por si acaso
 
     "musical instruments": "Musical Instruments",
-    "Musical Instruments": "Musical Instruments",
     "instruments": "Musical Instruments",
-    "Instruments": "Musical Instruments",
-    "instrumentos musicales": "Musical Instruments",
-    "Instrumentos musicales": "Musical Instruments"
+    "instrumentos musicales": "Musical Instruments"
 }
 
 
-# Neo4j
-uri = "neo4j://localhost:7687"
-driver =GraphDatabase.driver(uri, auth=("neo4j", "Manu6488"))
-
 # FUNCIONES GENERALES
-def eliminar_anterior():
+def eliminar_anterior(driver):
     """
     Función que elimina todos los nodos y relaciones anteriores.
-    Input:
-        None
-    Output:
-        None
+    Args:
+    - Driver: conexión con Neo4j que nos permite lanzarle las consultas
+    Returns:
+    - None
     """
     with driver.session() as session: # Sesion
 
@@ -80,41 +49,35 @@ def eliminar_anterior():
         session.run(consulta)
 
 
-# 1. Obtener similitudes entre usuarios y mostrar los enlaces en Neo4J
-def primera_funcionalidad(conexion_mysql, cursor):
+#Función que nos vendrá bien múltiples veces
+def restriccion_nodos_u(driver):
     """
-    Función que obtiene las similitudes entre los usuarios mediante la fórmula de la correlación de Pearson
-    e importa estas similitudes entre los usuarios a Neo4J.
-    Además realiza una consulta: cual es el usuario con mas vecinos.
+    Función que restringe que el identificador de cada usuario sea unico.
 
-    Input:
-        conexion_mysql: conexión a MySQL para modificar la base de datos
-        cursor: conexión a MySQL para realizar consultas en la base de datos
-    Output:
-        None
-
-    NOTA: no he puesto ninguna condición de "si ya está creado el documento similitudes_pearson.txt" no calcular simillitudes,
-    debido al simple de hecho si se cambia la N. En ese caso, hay que recalcular todas las similitudes otra vez.
+    Args:
+    - Driver: conexión con Neo4j que nos permite lanzarle las consultas
+    Returns:
+    - None
     """
-    u_mas_reviews = usuarios_mas_reviews(cursor) # Consulta de los n usuarios con más reviews en MySQL
+    with driver.session() as session: # Sesion
 
-    # FÓRMULA DE LA CORRELACIÓN DE PEARSON: escribiendo resultados en el fichero: similitudes_pearson
-    similitudes_pearson(conexion_mysql, cursor, u_mas_reviews)
-
-    # Cargar similitudes en Neo4J
-    cargar_similitudes(u_mas_reviews)
-
-    mostrar_usuario()
+        # RESTRICCIÓN PARA EL USUARIO
+        consulta1 = """
+        CREATE CONSTRAINT unique_user IF NOT EXISTS
+        FOR (user:USUARIO) REQUIRE user.id IS UNIQUE
+        """
+        session.run(consulta1) # Ejecutamos la consulta
+    
     
 # Funciones auxiliares de la primera funcionalidad
 def usuarios_mas_reviews(cursor):
     """
     Función que consulta en MySQL los N usuarios con más reviews.
     
-    Input:
-        cursor: conexión a MySQL para realizar consultas en la base de datos
-    Output:
-        resultado (tuple): Tupla de tuplas, lo que devuelve la consulta, con el siguiente formato: (reviewerId, n_reviews)
+    Args:
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    Returns:
+    - resultado (tuple): Tupla de tuplas, lo que devuelve la consulta, con el siguiente formato: (reviewerId, n_reviews)
     """
     consulta = """
     SELECT reviewerID, COUNT(id_review) as n_reviews
@@ -123,83 +86,53 @@ def usuarios_mas_reviews(cursor):
     ORDER BY n_reviews DESC
     LIMIT %s;
     """
-    cursor.execute(consulta, [N_U_MAS_REVIEWS])
+    cursor.execute(consulta, [num_usuarios_y_similitudes])
     return cursor.fetchall()
 
-def comprobacion_existencia_productos_comunes(cursor, u, v):
-    """
-    Función que realiza una consulta a SQL: comprueba la existencia de reseñas de los mismos productos entre dos usuarios (u y v).
 
-    Input:
-        cursor: conexión a MySQL para realizar consultas en la base de datos
-        u (str): identificador del primer usuario
-        v(str): identificador del segundo usuario
-
-    Output:
-        (bool): True si si que hay reseñas de productos en común (intersección), False en caso contrario.
-    """
-    consulta = """
-    SELECT COUNT(DISTINCT r1.asin) AS comunes
-    FROM reviews r1
-    JOIN reviews r2 ON r1.asin = r2.asin
-    WHERE r1.reviewerID = %s
-    AND r2.reviewerID = %s;
-    """
-    cursor.execute(consulta, [u,v])
-    fila = cursor.fetchone()
-    return fila[0] > 0 # booleano
-
+# es de las funciones más confusas, ya que nos devuelve un montón de valores que son todos necesarios para aplicar más adelante la fórmula de Pearson
 def datos_formula_pearson(cursor, u, v):
     """
     Función que realiza una consulta a MySQL: busca todos los datos necesarios para la fórmula de la correlación de Pearson.
 
-    Input:
-        cursor: conexión a MySQL para realizar consultas en la base de datos
-        u (str): identificador del primer usuario
-        v(str): identificador del segundo usuario
-    Output:
-        resultado (Tuple): tupla de tuplas que contiene lo que devuelve la consulta.
+    Args:
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    - u (str): identificador del primer usuario
+    - v(str): identificador del segundo usuario
+    Returns:
+    - resultado (Tuple): tupla de tuplas que contiene lo que devuelve la consulta. Son múltiples valores diferentes para la fórmula
     """
     consulta = """
-    SELECT 
-    r1.asin,
-    r1.overall AS r_ui,
-    r2.overall AS r_vi,
-    medias.media_u,
-    medias.media_v,
+    SELECT r1.asin, r1.overall AS r_ui, r2.overall AS r_vi, medias.media_u, medias.media_v,
     (r1.overall - medias.media_u) * (r2.overall - medias.media_v) AS numerador_parcial,
     POW(r1.overall - medias.media_u, 2) AS denom_u_parcial,
     POW(r2.overall - medias.media_v, 2) AS denom_v_parcial
     
     FROM reviews r1
-    JOIN reviews r2 
-        ON r1.asin = r2.asin
-    JOIN (
-        SELECT 
-            AVG(r1.overall) AS media_u,
-            AVG(r2.overall) AS media_v
-        FROM reviews r1
-        JOIN reviews r2 
-            ON r1.asin = r2.asin
-        WHERE r1.reviewerID = %s
-        AND r2.reviewerID = %s
-    ) medias
+    JOIN reviews r2 ON r1.asin = r2.asin
+    JOIN (SELECT AVG(r1.overall) AS media_u, AVG(r2.overall) AS media_v
+          FROM reviews r1
+          JOIN reviews r2 ON r1.asin = r2.asin
+          WHERE r1.reviewerID = %s
+          AND r2.reviewerID = %s
+          ) medias
     WHERE r1.reviewerID = %s
     AND r2.reviewerID = %s;
     """
     # Devuelve todo lo que necesito para la fórmula: cada fila representa un artículo común i
-    cursor.execute (consulta, [u, v, u, v])
+    cursor.execute(consulta, [u, v, u, v])
     return cursor.fetchall()
+
 
 def creacion_indice(cursor, conexion_mysql):
     """
     Función que crea un ínidice para optimizar la consulta.
 
-    Input:
-        conexion_mysql: conexión a MySQL para modificar la base de datos
-        cursor: conexión a MySQL para realizar consultas en la base de datos
-    Output:
-        None
+    Args:
+    - conexion_mysql: conexión a MySQL para modificar la base de datos
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    Returns:
+    - None
 
     """
     consulta = """
@@ -212,22 +145,23 @@ def creacion_indice(cursor, conexion_mysql):
     except Exception as e:
         pass
 
+
 def eliminar_indice(cursor, conexion_mysql):
     """
     Función que elimina el índice creado anteriormente.
 
-    Input:
-        conexion_mysql: conexión a MySQL para modificar la base de datos
-        cursor: conexión a MySQL para realizar consultas en la base de datos
-    Output:
-        None
+    Args:
+    - conexion_mysql: conexión a MySQL para modificar la base de datos
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    Returns:
+    - None
     """
     # Eliminamos el índice
     consulta = """
     DROP INDEX datos_pearson ON reviews;
     """
     try:
-        #apagamos un segundo las claves foráneas y sus restricciones para que no prohiba eliminar el índice (después de depurar errores)
+        #apagamos un segundo las claves foráneas y sus restricciones para que no prohiba eliminar el índice (después de depurar errores y ver que fallaba)
         cursor.execute("SET FOREIGN_KEY_CHECKS = 0;")
         cursor.execute(consulta)
         cursor.execute("SET FOREIGN_KEY_CHECKS = 1;")
@@ -235,232 +169,177 @@ def eliminar_indice(cursor, conexion_mysql):
     except Exception as e:
         pass
 
+#en esta función es cuando, con los datos sacados anteriormente, aplicamos la fórmula
 def similitudes_pearson(conexion_mysql, cursor, u_mas_reviews):
     """
-    Función que sobre un fichero (sobre)escribe el usuario1 (u), el usuario2 (v) y su similitud calculada mediante la correlación de Pearson.
+    Función que genera una lista de tuplas, donde cada tupla contendrá (usuario A, usuario B, relación de Pearson entre ellos)
+    De esta manera no hay que generar archivos externos y se puede devolver una ruta igual de válida
 
-    Input:
-        conexion_mysql: conexión a MySQL para modificar la base de datos
-        cursor: conexión a MySQL para realizar consultas en la base de datos
-        u_mas_reviews (tuple):  tupla de tuplas con el siguiente formato: (reviewerId, n_reviews)
-    Output:
-        None
+    Args:
+    - conexion_mysql: conexión a MySQL para modificar la base de datos
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    - u_mas_reviews (tuple):  tupla de tuplas con el siguiente formato: (reviewerId, n_reviews)
+    Returns:
+    - None
     """
-    
-    with open(RUTA_SIMILITUDES_PEARSON, "w", encoding="utf-8") as f:
-        f.write("Usuario1\tUsuario2\tPearson\n")
         
-        creacion_indice(cursor, conexion_mysql)
+    creacion_indice(cursor, conexion_mysql)
+    
+    lista_similitudes = []
 
-        for i in range(len(u_mas_reviews)):
-            for j in range(i + 1, len(u_mas_reviews)):
-                # Para cadad par de usuarios, se inicializan las variables
-                suma_num = 0
-                suma_den_u = 0
-                suma_den_v = 0
+    for i in range(len(u_mas_reviews)): #recorreremos cada usuario
+        for j in range(i + 1, len(u_mas_reviews)): # lo compararemos con el resto de n-1 usuarios registrados
+                # Para cada par de usuarios, se inicializan las variables
 
-                u = u_mas_reviews [i][0]     # Usuario 1
-                v = u_mas_reviews [j][0]     # Usuario 2
+            u = u_mas_reviews [i][0]     # Usuario 1
+            v = u_mas_reviews [j][0]     # Usuario 2
+        
+            resultado = datos_formula_pearson(cursor, u, v) # Datos necesarios de cada artículo en común entre u y v
             
-                tienen = comprobacion_existencia_productos_comunes(cursor, u, v) # ¿Tienen productos evaluados en común u y v?
-                if not tienen:
-                    continue
+            if not resultado: #en caso de que devuelva lista vacía, es decir, que no hay nada en común entre ellos
+                continue
+            
+            suma_num = 0
+            suma_den_u = 0
+            suma_den_v = 0
+            
+            for fila in resultado: # Iterar cada artículo
+                asin, r_ui, r_vi, media_u, media_v, numerador_parcial, denom_u_parcial, denom_v_parcial = fila # descomponer
 
-                resultado = datos_formula_pearson(cursor, u, v) # Datos necesarios de cada artículo en común entre u y v
-                for fila in resultado: # Iterar cada artículo
-                    asin, r_ui, r_vi, media_u, media_v, numerador_parcial, denom_u_parcial, denom_v_parcial = fila # descomponer
+                suma_num += float(numerador_parcial)
+                suma_den_u += float(denom_u_parcial)
+                suma_den_v += float(denom_v_parcial)
 
-                    suma_num += float(numerador_parcial)
-                    suma_den_u += float(denom_u_parcial)
-                    suma_den_v += float(denom_v_parcial)
-
-                if suma_den_u != 0 and suma_den_v != 0:
-                    pearson_uv = suma_num / ((suma_den_u ** 0.5) * (suma_den_v ** 0.5))
+            if suma_den_u != 0 and suma_den_v != 0:
+                pearson_uv = suma_num / ((suma_den_u ** 0.5) * (suma_den_v ** 0.5))
                     
-                    f.write(f"{u}\t{v}\t{pearson_uv}\n") # Fila por cada u y v
+                lista_similitudes.append((u, v, pearson_uv))
         
-        eliminar_indice(cursor, conexion_mysql)
+    eliminar_indice(cursor, conexion_mysql)
 
-def cargar_similitudes(u_mas_reviews):
-    """
-    Función que almacena las similitudes como relaciones y los usuarios como nodos en Neo4J.
-
-    Input:
-        u_mas_reviews (tuple):  tupla de tuplas con el siguiente formato: (reviewerId, n_reviews)
-    Output:
-        None
+    return lista_similitudes
     
-    Si se desea cargar más nodos habría que cambiar la variable global N.
+
+def insertar_usuarios_similitudes(driver, u_mas_reviews, lista_similitudes):
     """
-    eliminar_anterior() # Limpiar Neo4j
-    restriccion_nodos_u() # Restringir que el id de los nodos sea único
+    Función que inserta los usuarios como nodos y las similitudes como una relación dentro de Neo4J
+    Hemos juntado todas las funciones de inserción en esta misma para que lo haga de una
 
-    insertar_usuarios_similitudes(u_mas_reviews)    # Lectura de fichero y creación de nodos + relación en Neo4j
-
-def restriccion_nodos_u():
+    Args:
+    - Driver: conexión con Neo4j que nos permite lanzarle las consultas 
+    - u_mas_reviews (tuple):  tupla de tuplas (reviewerId, n_reviews)
+    - lista_similitudes (list): lista de tuplas (usuario1, usuario2, pearson)
+    Returns:
+    - None
     """
-    Función que restringe que el identificador de cada usuario sea unico.
+    with driver.session() as session:
+        
+        # Insertamos los nodos
+        consulta_nodo = "MERGE (u:USUARIO {id: $id_u})"
+        
+        for u, _ in u_mas_reviews:
+            # Ejecutamos la consulta directamente
+            session.run(consulta_nodo, id_u=u)
 
-    Input:
-        None
-    Output:
-        None
-    """
-    with driver.session() as session: # Sesion
-
-        # RESTRICCIÓN PARA EL USUARIO
-        consulta1 = """
-        CREATE CONSTRAINT unique_user IF NOT EXISTS
-        FOR (user:USUARIO) REQUIRE user.id IS UNIQUE
-        """
-        session.run(consulta1) # Ejecutamos la consulta
-
-def insertar_usuarios_similitudes(u_mas_reviews):
-    """
-    Función que inserta los usuarios como nodos y las similitudes como una relación.
-    Para los nodos, simplemente utiliza la lista de usuarios con más reviews.
-    Para las relaciones, lee el fichero con ruta: RUTA_SIMILITUDES
-    e inserta sus datos en Neo4j con el siguiente formato: [usuario1] - [similitud] -> [usuario2] y [usuario1] <- [similitud] - [departamento2],
-    es decir: como una relacion bidireccinal.
-
-    Input:
-        u_mas_reviews (tuple):  tupla de tuplas con el siguiente formato: (reviewerId, n_reviews)
-    Output:
-        None
-    """
-    # INSERTAR NODOS
-    for u, _ in u_mas_reviews:
-        creacion_usuario (u)
-
-
-    # INSERTAR RELACIÓN
-    with open(RUTA_SIMILITUDES_PEARSON, "r", encoding = "utf-8") as f:
-        next(f) # No leer la primera línea (es el indicador de cada columna)
-
-        for linea in f:
-            u, v, similitud = linea.strip().split() # descomponemos
-
-            creacion_similitud(u, v, similitud) # Creación del nodo usuario1 (u), usuario2 (v) y de la relacion entre ellos (similitud)
-
-def creacion_usuario(u):
-    """
-    Función que crea en Neo4j, mediante una conexion, el nodo usuario u.
-    Input:
-        u (str): identificador del nodo a crear.
-    Output:
-        None
-    """
-
-    with driver.session() as session: # Sesion
-
-        consulta = """
-        MERGE (u: USUARIO {id: $id_u})
-        """
-            # MERGE porque si existe ya el nodo no quiero que se duplica (como un CREATE IF NOT EXISTS)
-        session.run(consulta, id_u=u)
-
-def creacion_similitud(u, v, similitud):
-    """
-    Función que crea en Neo4j, mediante una conexion, el nodo usuario1 (u), el nodo usuario2 (v) y la relacion entre ellos BIDIRECCIONAL(similitud).
-    Input:
-        None
-    Output:
-        None
-    """
-
-    with driver.session() as session: # Sesion
-
-        consulta = """
+        # Se insertan las relaciones
+        consulta_relacion = """
         MATCH (u: USUARIO {id: $id_u}), (v: USUARIO {id: $id_v})
         MERGE (u)-[:SIMILITUD {pearson: $dato_similitud}]->(v)
         MERGE (u)<-[:SIMILITUD {pearson: $dato_similitud}]-(v)
         """
-            # MERGE porque si existe ya el nodo no quiero que se duplica (como un CREATE IF NOT EXISTS)
-        session.run(consulta, id_u=u, id_v= v, dato_similitud= similitud)
+        
+        for u, v, similitud in lista_similitudes:
+            # Ejecutamos la consulta directamente (asegurando que el dato es numérico)
+            session.run(consulta_relacion, id_u=u, id_v=v, dato_similitud=float(similitud))
+            
 
-def mostrar_usuario():
+def mostrar_usuario(driver):
     """
     Función que realiza una consulta a Neo4J y muestra los usuarios con el número mayor de vecinos.
-
-    Input:
-        None
-    Output:
-        None
+    Directamente el desempate (en caso de que lo haya) lo realiza Neo4J y devuelve solo aquellos con mayor nº de vecinos
+    
+    Args:
+    - Driver: conexión con Neo4j que nos permite lanzarle las consultas
+    Returns:
+    - None
     """
-    with driver.session() as session: # Sesion
-
+    with driver.session() as session: 
+        
         consulta = """
         MATCH (u:USUARIO)-[:SIMILITUD]-(v:USUARIO)
         WITH u, COUNT(DISTINCT v) AS vecinos
+        WITH MAX(vecinos) AS max_vecinos
+        
+        MATCH (u:USUARIO)-[:SIMILITUD]-(v:USUARIO)
+        WITH u, COUNT(DISTINCT v) AS vecinos, max_vecinos
+        WHERE vecinos = max_vecinos
+        
         RETURN u, vecinos
-        ORDER BY vecinos DESC
         """
-        # Se devuelven todos en vez de uno debido a que se ha visto que existen dos usuarios con el numero de vecinos máximos.
-        # De esta forma se obtienen todos y se comparan entre sí.
         
         resultado = session.run(consulta)
-        res = resultado.data() # Lista de disccionarios
+        res = resultado.data() 
 
         if not res:
             print("No hay resultados de la consulta")
             return
 
-        max = [res[0]]
-        # Comprobar los máximos
-        for i in range (1,len(res)):
-            if res[i]["vecinos"] == res[0]["vecinos"]: # Si es igual que el máximo
-                max.append(res[i])
-            else:
-                break # A partir de aquí, son distintos
-
         print("Usuario(s) con el número máximo de vecinos:")
-        for elem in max:
+        for elem in res:
             print(f"Usuario: {elem['u']['id']}, Número de vecinos: {elem['vecinos']}")
 
 
-# 2. Obtener enlaces entre usuarios y artículos
-def segunda_funcionalidad(cursor):
+# EN ESTA FUNCIÓN SE AGRUPA TODO LO DEL PRIMER APARTADO
+def primera_funcionalidad(conexion_mysql, cursor, driver):
     """
-    Función que obtiene N artículos distintos del mismo tipo de producto (tipo y N dado por el usuario). 
-    Asimismo, obtiene los usuarios que han realizado reseñas sobre cada producto obtenido anteriormente, además de la nota y tiempo de la reseña.
+    Función que obtiene las similitudes entre los usuarios mediante la fórmula de la correlación de Pearson
+    e importa estas similitudes entre los usuarios a Neo4J.
+    Además realiza una consulta: cuál es el usuario con mas vecinos.
 
-    Input:
-        cursor: conexión a MySQL para realizar consultas en la base de datos
-    Output:
-        None
+    Args:
+    - conexion_mysql: conexión a MySQL para modificar la base de datos
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    - Driver: conexión con Neo4j que nos permite lanzarle las consultas
+    Returns:
+    - None
     """
-    # Pedir n, tipo de producto al usuario
-    n_articulos, tipo = eleccion_usuario()
+    u_mas_reviews = usuarios_mas_reviews(cursor) # Consulta de los n usuarios con más reviews en MySQL
 
-    # Consultar artículos y usuarios en MySQL
-    asins = consulta(cursor, n_articulos, tipo)
+    # FÓRMULA DE LA CORRELACIÓN DE PEARSON: guardandolo todo en la lista
+    lista_similitudes = similitudes_pearson(conexion_mysql, cursor, u_mas_reviews)
 
-    # Insertar en Neo4J
-    cargar_articulo_usuarios(asins)
+    # Cargar similitudes en Neo4J
+    eliminar_anterior(driver) # Limpiar Neo4j
+    restriccion_nodos_u(driver) # Restringir que el id de los nodos sea único
 
-    print("Carga de datos concluida. Ya puedes consultar la relación de cada artículo con los usuarios que lo han comentado.")
+    insertar_usuarios_similitudes(driver, u_mas_reviews, lista_similitudes)
+
+    mostrar_usuario(driver)
 
 
+
+# COMIENZA APARTADO 2
 # Funciones auxiliares de la segunda funcionalidad
 def eleccion_usuario():
     """
     Función que da a elegir al usuario el tipo de producto que desea visualizar el estudio de sus reviews
     y cuantos articulos aleatorios desea visualizar.
 
-    In:
-        None
-    Out:
-        tipo (str): tipo de producto escogido por el usuario
-        n_articulos (int): numero de articulos aleatorios.
+    Args:
+    - None
+    Returns:
+    - tipo (str): tipo de producto escogido por el usuario
+    - n_articulos (int): numero de articulos aleatorios.
     """
 
-    print("Tipos de artículo: " + ", ".join(TIPOS_VALIDOS_PROD.values()))
+    print("Tipos de artículo: " + ", ".join(tipos_articulos_validos.values())) #acudimos al diccionario creado al principio que incluye posibles malas formas de escribir el tipo
 
     while True:
-        tipo = input("Introduzca el tipo de artículo: ").strip()
-        if tipo in TIPOS_VALIDOS_PROD.keys():
-            tipo = TIPOS_VALIDOS_PROD[tipo]
+        tipo_consulta = input("Introduzca el tipo de artículo: ").strip().lower()
+        if tipo_consulta in tipos_articulos_validos.keys():
+            tipo = tipos_articulos_validos[tipo_consulta]
             break
+        
         print("El tipo de artículo introducido es incorrecto.\n")
 
     while True:
@@ -475,77 +354,57 @@ def eleccion_usuario():
 
     return n_articulos, tipo
 
+
 def consulta(cursor, n_articulos, tipo):
     """
     Función que realiza dos consultas en MySQL: n articulos aleatorios de un tipo específico y los usuarios que han hecho reseña de cada uno.
-    Esta información se almacena en un fichero llamado: articulo_por_usuarios.txt.
+    Esta información se almacena en una lista que mantiene en memoria
     
-    Input:
-        cursor: conexión a MySQL para realizar consultas en la base de datos
-        tipo (str): tipo de producto escogido por el usuario
-        n_articulos (int): numero de articulos aleatorios.
-    Output:
-        asins (tuple): Tupla de tuplas que contiene los identificadores de los n usuarios aleatorios.
+    Args:
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    - tipo (str): tipo de producto escogido por el usuario
+    - n_articulos (int): numero de articulos aleatorios.
+    Returns:
+    - asins (tuple): Tupla de tuplas que contiene los identificadores de los n usuarios aleatorios.
     """
 
-    # 1. Escoger n articulos del tipo escogido aleatorios
-    consulta = """
+    # Escoge n articulos del tipo escogido aleatorios
+    consulta_asins = """
     SELECT asin
     FROM articulos
     WHERE categoria = %s
     ORDER BY RAND()
     LIMIT %s;
     """
-    cursor.execute (consulta, [tipo, n_articulos])
-    asins = cursor.fetchall()
+    cursor.execute (consulta_asins, [tipo, n_articulos])
+    asins = [fila[0] for fila in cursor.fetchall()] #generamos ya una lista "limpia" como queremos
 
-    # 2. Buscar los usuarios que han hecho reseña acerca de cada uno y almacenar tambien la nota y el tiempo
-    consulta = """
-    SELECT r.reviewerID, r.overall, f.reviewTime
+    # Busca los usuarios que han hecho reseña acerca de cada uno y almacena tambien la nota y el tiempo
+    consulta_reviews = """
+    SELECT r.asin, r.reviewerID, r.overall, f.reviewTime
     FROM reviews r
     INNER JOIN fechas f ON r.unixReviewTime=f.unixReviewTime
     WHERE r.asin = %s;
     """
 
-    with open(RUTA_ARTICULO_POR_USUARIOS, "w", encoding="utf-8") as f:
-        f.write(f"asin\treviewerID\toverall\treviewTime\n")
-
-        for asin in asins:
-            asin = asin[0] # quitar la tupla
-            cursor.execute(consulta, [asin])
-            datos_asin = cursor.fetchall()
-
-            for fila in datos_asin:
-                reviewerID, overall, reviewTime = fila
-                f.write(f"{asin}\t{reviewerID}\t{overall}\t{reviewTime}\n") # Fila por cada u y v
-
-    return asins
-
-def cargar_articulo_usuarios(asins):
-    """
-    Función que almacena los articulos y los usuarios como nodos y los relaciona segun las reviews con sus propiedades correspondientes en Neo4J.
-
-    Input:
-        asins (tuple): Tupla de tuplas que contiene los identificadores de los n usuarios aleatorios.
-    Output:
-        None
+    datos_reviews = []
     
-    Si se desea cargar más nodos habría que cambiar la variable global N.
-    """
+    for asin in asins:
+        cursor.execute(consulta_reviews, [asin])
+        # Vamos añadiendo los resultados de cada ASIN a la lista importante
+        datos_reviews.extend(cursor.fetchall()) 
 
-    eliminar_anterior() # Limpiar Neo4j
-    restriccion_nodos_ua() # Restringir que el id de los nodos sea único
+    return asins, datos_reviews
 
-    insertar_asin_usuarios (asins)   # Creación nodos producto
 
-def restriccion_nodos_ua():
+def restriccion_nodos_ua(driver):
     """
     Función que restringe que el identificador de cada usuario y de cada artículo sea único.
 
-    Input:
-        None
-    Output:
-        None
+    Args:
+    - driver: conexión con Neo4j que nos permite lanzarle las consultas
+    Returns:
+    - None
     """
     with driver.session() as session: # Sesion
 
@@ -563,91 +422,108 @@ def restriccion_nodos_ua():
         """
         session.run(consulta2) # Ejecutamos la consulta
 
-def insertar_asin_usuarios(asins):
+
+def cargar_articulo_usuarios(driver, asins, datos_reviews):
     """
-    Función que inserta los nodos producto 
-    y lee el fichero de los datos para insertar las relaciones de cada producto con sus usuarios, notas y tiempo en Neo4J.
-
-    Input:
-        asins (tuple): tupla de strs (los identificadores de los artículos)
-    Output:
-        None
+    Función que almacena los artículos y los usuarios como nodos y los relaciona según las 
+    reviews con sus propiedades correspondientes en Neo4J, todo en una sola sesión.
+    
+    Args:
+    - driver: conexión con Neo4j que nos permite lanzarle las consultas
+    - asins (list): contiene la lista de los n articulos del tipo escogido 
+    - datos_reviews (list): contiene la información de los usuarios para cada producto (y el resto de valores interesantes)
+    Returns:
+    - None
     """
-    # INSERTAR NODOS
-    for asin in asins:
-        asin = asin[0]
-        creacion_asin (asin)
+    eliminar_anterior(driver) #llamamos de nuevo a las funciones globales
+    restriccion_nodos_ua(driver) 
 
-    # INSERTAR USUARIOS Y REL
-    with open(RUTA_ARTICULO_POR_USUARIOS, "r", encoding = "utf-8") as f:
-        next(f) # No leer la primera línea (es el indicador de cada columna)
+    with driver.session() as session:
+        
+        # Primero insertamos los nodos de tipo producto
+        consulta_producto = "MERGE (p:PRODUCTO {id: $asin_id})"
+        for asin in asins:
+            session.run(consulta_producto, asin_id=asin)
 
-        for linea in f:
-            asin, reviewerID, overall, reviewTime = linea.strip().split() # descomponemos
-
-            creacion_usuarios_review (asin, reviewerID, overall, reviewTime)
-
-def creacion_asin(asin):
-    """
-    Función que crea en Neo4j, mediante una conexion, el nodo PRODUCTO con identificador: asin.
-    Input:
-        asin (str): identificador del nodo a crear.
-    Output:
-        None
-    """
-
-    with driver.session() as session: # Sesion
-
-        consulta = """
-        MERGE (product: PRODUCTO {id: $asin_id})
+        # Insertamos los usuarios y las relaciones con los productos
+        consulta_relacion = """
+        MATCH (p:PRODUCTO {id: $asin_id})
+        MERGE (u:USUARIO {id: $reviewer_id})
+        MERGE (u)-[:RESEÑA {nota: $nota, tiempo: $tiempo}]->(p)
         """
-            # MERGE porque si existe ya el nodo no quiero que se duplica (como un CREATE IF NOT EXISTS)
-        session.run(consulta, asin_id = asin)
+        for fila in datos_reviews:
+            asin, reviewer_id, nota, tiempo = fila
+            # Aseguramos que la nota entre como float (número) y no como string
+            session.run(consulta_relacion, asin_id=asin, reviewer_id=reviewer_id, nota=float(nota), tiempo=tiempo)
 
-def creacion_usuarios_review (asin, reviewerID, overall, reviewTime):
+
+def segunda_funcionalidad(cursor, driver):
     """
-    Función que crea el nodo USUARIO y la relación entre ese usuario 
-    y ese producto con nota y tiempo (momento que se hizo la reseña) como propiedad.
+    Función que obtiene N artículos distintos del mismo tipo de producto (tipo y N dado por el usuario). 
+    Asimismo, obtiene los usuarios que han realizado reseñas sobre cada producto obtenido anteriormente, además de la nota y tiempo de la reseña.
 
-    Input:
-        asin (str): identificador del producto
-        reviewerID (str): identificador del usuario que ha realizado la reseña.
-        overall (int): nota asignada al producto por el usuario en la reseña
-        reviewTime (str): momento en el que se hizo la reseña.
-    Output:
-        None
+    Args:
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    - driver: conexión con Neo4j que nos permite lanzarle las consultas 
+    Returns:
+    - None
     """
-    with driver.session() as session: # Sesion
+    # Pedir n, tipo de producto al usuario
+    n_articulos, tipo = eleccion_usuario()
 
-        consulta = """
-        MATCH (producto: PRODUCTO {id: $asin_id})
-        MERGE (reviewerID: USUARIO {id: $reviewer_ID})
-        MERGE (reviewerID)-[:RESEÑA {nota: $nota, tiempo: $tiempo}]->(producto)
-        """
-            # MERGE porque si existe ya el nodo no quiero que se duplica (como un CREATE IF NOT EXISTS)
-        session.run(consulta, asin_id = asin, reviewer_ID=reviewerID, nota= overall, tiempo = reviewTime)
+    # Consultar artículos y usuarios en MySQL
+    asins, datos_reviews = consulta(cursor, n_articulos, tipo)
+
+    if not asins:
+        print("No hay artículos para esta categoría")
+        return 
+    
+    # Insertar en Neo4J
+    cargar_articulo_usuarios(driver, asins, datos_reviews)
+
+    print("Carga de datos concluida. Ya puedes consultar la relación de cada artículo con los usuarios que lo han comentado.")
 
 
-
-
-def obtener_usuarios_multicategoria(cursor):
+#COMIENZA APARTADO 3
+def obtener_usuarios_multicategoria(cursor, opcion):
     """
     Realiza la consulta SQL para los primeros 400 usuarios por nombre y 
     filtra en Python aquellos que tienen más de una categoría distinta.
+    Le dejamos al usuario que elija si el nodo puede tener nombre nulo o no, en caso de ser nulo, ordena por ID ASC
+    Args:
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    - opcion (int): se indica con un 1 si se quieren borrar los nulos del nombre del reviewer o 2 si se tienen en cuenta
+    Returns:
+    - datos_para_neo4j (list): terminamos teniendo una lista de diccionario que contiene los datos a insertar en Neo4j
     """
     # Obtenemos a los primeros 400 usuarios ordenados por nombre alfabético,
     # junto con las categorías que han consumido y cuántos artículos de cada una.
-    consulta = """
-    SELECT us.reviewerID, a.categoria, COUNT(r.asin) AS cantidad
-    FROM (SELECT reviewerID
-    FROM usuarios
-    WHERE reviewerName IS NOT NULL
-    ORDER BY reviewerName ASC
-    LIMIT 400) AS us
-    LEFT JOIN reviews r ON us.reviewerID = r.reviewerID
-    LEFT JOIN articulos a ON r.asin = a.asin
-    GROUP BY us.reviewerID, a.categoria;
-    """
+    consulta = None
+    if opcion == 1: #quitando los nulos
+        consulta = """
+        SELECT us.reviewerID, a.categoria, COUNT(r.asin) AS cantidad
+        FROM (SELECT reviewerID
+              FROM usuarios
+              WHERE reviewerName IS NOT NULL
+              ORDER BY reviewerName ASC
+              LIMIT 400) AS us
+        JOIN reviews r ON us.reviewerID = r.reviewerID
+        JOIN articulos a ON r.asin = a.asin
+        GROUP BY us.reviewerID, a.categoria;
+        """
+        
+    elif opcion == 2: #tiene en cuenta los nulos y en segundo lugar ordena por ID
+        consulta = """
+        SELECT us.reviewerID, a.categoria, COUNT(r.asin) AS cantidad
+        FROM (SELECT reviewerID
+              FROM usuarios
+              ORDER BY reviewerName ASC, reviewerID ASC
+              LIMIT 400) AS us
+        JOIN reviews r ON us.reviewerID = r.reviewerID
+        JOIN articulos a ON r.asin = a.asin
+        GROUP BY us.reviewerID, a.categoria;
+        """
+        
     cursor.execute(consulta)
     resultados = cursor.fetchall()
 
@@ -673,9 +549,15 @@ def obtener_usuarios_multicategoria(cursor):
                 
     return datos_para_neo4j
 
-def restriccion_nodos_uc():
+
+def restriccion_nodos_uc(driver):
     """
     Asegura que los nodos de Categoría también sean únicos, y también vuelve a recordarle que los usuarios sean únicos
+    
+    Args:
+    - driver: conexión con Neo4j que nos permite lanzarle las consultas 
+    Returns:
+    - None
     """
     with driver.session() as session:
         # RESTRICCIÓN PARA EL USUARIO de nuevo por si acaso
@@ -692,12 +574,19 @@ def restriccion_nodos_uc():
         """
         session.run(consulta2)
 
-def cargar_categorias_neo4j(datos_lote):
+
+def cargar_categorias_neo4j(driver, datos_lote):
     """
     Recibe la lista de diccionarios filtrada y la inyecta en Neo4j de forma masiva.
+    
+    Args:
+    - driver: conexión con Neo4j que nos permite lanzarle las consultas
+    - datos_lote (list): es la lista de diccionarios que contiene todos los datos a insertar
+    Returns:
+    - None
     """
-    eliminar_anterior() # Partimos de una base de datos limpia
-    restriccion_nodos_uc() # Añadimos la restricción de categoría
+    eliminar_anterior(driver) # Partimos de una base de datos limpia
+    restriccion_nodos_uc(driver) # Añadimos la restricción de categoría
     
     with driver.session() as session:
         consulta = """
@@ -713,35 +602,45 @@ def cargar_categorias_neo4j(datos_lote):
                         cantidad=fila["cantidad"])
 
 
-
-
-def tercera_funcionalidad(cursor):
+def tercera_funcionalidad(cursor, driver, opcion):
     """
     Función que selecciona los 400 primeros usuarios ordenados por nombre, 
     filtra aquellos que han consumido más de un tipo de artículo y los carga en Neo4j.
+    Además hace la distinción entre tener en cuenta el nulo como nombre o no.
+    
+    Args:
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    - driver: conexión con Neo4j que nos permite lanzarle las consultas
+    - opcion (int): se indica con un 1 si se quieren borrar los nulos del nombre del reviewer o 2 si se tienen en cuenta 
+    Returns:
+    - None
     """
-    datos_filtrados = obtener_usuarios_multicategoria(cursor)
+    datos_filtrados = obtener_usuarios_multicategoria(cursor, opcion)
     
     if not datos_filtrados:
         print("No se encontraron usuarios que cumplan las condiciones")
         return
 
-    cargar_categorias_neo4j(datos_filtrados)
+    cargar_categorias_neo4j(driver, datos_filtrados)
     
     print("Carga de datos del apartado 4.3 concluida ")
 
 
 
-
-# APARTADO 4.4
+# COMIENZO DEL APARTADO 4.4
 
 def obtener_articulos_populares(cursor):
     """
-    SQL: Busca los 5 ASINs con más reviews dentro del límite de 40. 
+    Busca los 5 ASINs con más reviews dentro del límite de 40. 
+    
+    Args:
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    Returns:
+    - cursor.fetchall(): devuelve directamente el contenido recuperado
     """
     # Para no hacer dos búsquedas aisladas en MySQL, se puede incluir toda la búsqueda en una sola query
     # Idealmente se podría crear una vista que realmente crease la tabla temporal con los 5 artículos más populares
-    # De igual manera, tanto con FROM como con JOIN se nos permite hacer este peqieño filtrado, y funciona genial
+    # De igual manera, tanto con FROM como con JOIN se nos permite hacer este pequeño filtrado, y funciona genial
     consulta_asins = """
     SELECT r.reviewerID, r.asin
     FROM reviews r
@@ -759,7 +658,14 @@ def obtener_articulos_populares(cursor):
 
 def obtener_intersecciones_usuarios(cursor, usuarios):
     """
-    SQL: Calcula cuántos artículos (en total) tienen en común cada par de usuarios del pool. 
+    Calcula cuántos artículos (en total) tienen en común cada par de usuarios del total. 
+    
+    Args:
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    - usuarios: lista con todos los usuarios a analizar
+    
+    Returns:
+    - cursor.fetchall(): lista que contiene parejas de IDs y sus relaciones
     """
     if len(usuarios) < 2:
         return []
@@ -774,16 +680,24 @@ def obtener_intersecciones_usuarios(cursor, usuarios):
           AND r2.reviewerID IN ({formato_in})
     GROUP BY r1.reviewerID, r2.reviewerID;
     """
+    #observación interesante, le pasamos la lista dos veces porque queremos que analice dos veces los ids 
     cursor.execute(consulta, usuarios + usuarios) 
     return cursor.fetchall() #nos devolverá parejas de IDs y las relaciones que tienen
 
 
-def cargar_populares_neo4j(prod_usuarios, afinidades):
+def cargar_populares_neo4j(driver, prod_usuarios, afinidades):
     """
-    Carga nodos y relaciones iterando en Python (sin UNWIND).
+    Carga nodos y relaciones iterando en Neo4j, y también imponiendo restricción útil a la hora de crear los nodos
+    
+    Args:
+    - driver: conexión con Neo4j que nos permite lanzarle las consultas
+    - prod_usuarios (list): lista con los ids de los reviewers y de los productos 
+    - afinidades (list): lista que contiene parejas de IDs y las relaciones que tienen 
+    Returns:
+    - None
     """
-    eliminar_anterior() 
-    restriccion_nodos_ua() 
+    eliminar_anterior(driver) 
+    restriccion_nodos_ua(driver) 
 
     with driver.session() as session:
         # Creamos Relaciones Usuario -> Producto
@@ -801,13 +715,19 @@ def cargar_populares_neo4j(prod_usuarios, afinidades):
         MERGE (u1)-[:COMUN {articulos: $cant}]-(u2)
         """
         for u1, u2, cant in afinidades:
-            session.run(query_comun, id_u1=u1, id_u2=u2, cant=cant)
+            session.run(query_comun, id_u1=u1, id_u2=u2, cant=int(cant)) #imponemos que la cantidad sea un valor entero
 
 
-def cuarta_funcionalidad(cursor):
+def cuarta_funcionalidad(cursor, driver):
     """
     Selecciona los 5 artículos con más reviews (pero menos de 40), 
     los carga en Neo4j con sus usuarios y calcula artículos en común entre ellos.
+    
+    Args:
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
+    - driver: conexión con Neo4j que nos permite lanzarle las consultas
+    Returns:
+    - None
     """
     
     # Obtengo los productos populares y sus usuarios
@@ -817,46 +737,95 @@ def cuarta_funcionalidad(cursor):
         print("No se han encontrado datos para esta consulta.")
         return
 
-    # Extraemos la lista de usuarios únicos para calcular afinidades
-    conjunto_usuarios = set()
-    for fila in productos_y_usuarios:
-        usuario = fila[0]
-        conjunto_usuarios.add(usuario)
-
-    lista_usuarios = list(conjunto_usuarios)
+    # Extraemos la lista de usuarios únicos para calcular afinidades (es decir, es una lista que anteriormente se convirtió en set para borrar repetidos)
+    lista_usuarios = list(set([fila[0] for fila in productos_y_usuarios]))
 
     # Calculo los artículos en común entre esos usuarios
     relaciones_comun = obtener_intersecciones_usuarios(cursor, lista_usuarios)
 
     # Hacemos la carga en Neo4J
-    cargar_populares_neo4j(productos_y_usuarios, relaciones_comun)
+    cargar_populares_neo4j(driver, productos_y_usuarios, relaciones_comun)
     
-    # Mensaje de finalización según el enunciado
     print("Carga en Neo4J para el apartado 4.4 finalizada.") 
+
 
 
 if __name__ == "__main__":
     try:
+    
         client = conexion_mongo()
         db = client[nombre_bd_mongo] # DataBase
         collection = db[coleccion_mongo] # Colección
 
         conexion_mysql = conexion_db_SQL()
 
+        driver = GraphDatabase.driver(uri, auth=(neo4j_user, neo4j_password))
+        
+        activo = True
 
+        # menú principal
         with conexion_mysql.cursor() as cursor:
-            #primera_funcionalidad(conexion_mysql, cursor) # 1
-            #segunda_funcionalidad(cursor)
-            #tercera_funcionalidad(cursor)
-            cuarta_funcionalidad(cursor)
+            while activo:
+                print("\n" + "="*60)
+                print(" " * 15 + "MENÚ PRINCIPAL TERCERA PARTE")
+                print("="*60)
+                print("1. Obtener similitudes entre usuarios (Pearson)")
+                print("2. Obtener enlaces entre usuarios y artículos")
+                print("3. Usuarios que han consumido múltiples categorías")
+                print("4. Artículos populares y afinidades entre usuarios")
+                print("0. Salir del programa")
+                print("="*60)
 
+                opcion_menu = input("Elige una opción (0-4): ").strip()
+
+                if opcion_menu == '0':
+                    print("\nSaliendo del programa...")
+                    activo = False
+
+                elif opcion_menu == '1':
+                    print("\nEjecutando Funcionalidad 1")
+                    primera_funcionalidad(conexion_mysql, cursor, driver)
+
+                elif opcion_menu == '2':
+                    print("\nEjecutando Funcionalidad 2")
+                    # Los inputs de categoría y N artículos ya se piden automáticamente dentro
+                    segunda_funcionalidad(cursor, driver)
+
+                elif opcion_menu == '3':
+                    print("\nEjecutando Funcionalidad 3")
+                    print("¿Deseas tener en cuenta a los usuarios sin nombre registrado (es decir, con NULL)?")
+                    print("  1. NO (Descartar usuarios con nombre nulo)")
+                    print("  2. SÍ (Tenerlos en cuenta y ordenar por ID en caso de empate)")
+                    print("  0. Volver al menú de consultas generales")
+                    
+                    while True:
+                        opcion_null = input("Elige una opción (0, 1 o 2): ").strip()
+                        if opcion_null in ['1', '2']:
+                            tercera_funcionalidad(cursor, driver, int(opcion_null))
+                            break
+                        
+                        elif opcion_null == '0':
+                            break
+                        
+                        else:
+                            print("Opción incorrecta. Por favor, introduce 1 o 2.")
+
+                elif opcion_menu == '4':
+                    print("\nEjecutando Funcionalidad 4")
+                    cuarta_funcionalidad(cursor, driver)
+
+                else:
+                    print("\n⚠️ Opción no válida. Por favor, introduce un número del 0 al 4.")
 
     except Exception as e:
-        print("Error:", e)
+        print(f"\n❌ Error crítico en la ejecución: {e}")
     
     finally: 
-        # Cerrar conexiones
+        print("\nCerrando conexiones a las bases de datos...")
         if 'client' in locals():
             client.close()
-        if 'conexion_mysql' in locals():
+        if 'conexion_mysql' in locals() and conexion_mysql.open:
             conexion_mysql.close()
+        if 'driver' in locals():
+            driver.close()
+        print("Conexiones cerradas correctamente. Programa finalizado.")
