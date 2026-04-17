@@ -6,7 +6,6 @@ NOTA: Para poder ejecutar este fichero, se debe tener la aplicación Neo4j abier
 # Importaciones
 from load_data import conexion_db_SQL, conexion_mongo
 from configuracion import nombre_bd_mongo, coleccion_mongo, uri, neo4j_user, neo4j_password, num_usuarios_y_similitudes
-import os
 from neo4j import GraphDatabase
 import time
 
