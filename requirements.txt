@@ -5,3 +5,9 @@ collections
 re
 numpy
 os
+pandas
+datetime
+signal
+neo4j
+pymongo
+pymysql

@@ -11,27 +11,6 @@ from neo4j import GraphDatabase
 import time
 
 
-# segunda parte
-tipos_articulos_validos = {
-    "video games": "Video Games",
-    "video game": "Video Games",
-    "videojuegos": "Video Games",
-
-    "toys and games": "Toys and Games",
-    "toys": "Toys and Games",
-    "juguetes": "Toys and Games",
-
-    "digital music": "Digital Music",
-    "music": "Digital Music",
-    "musica digital": "Digital Music",
-    "música digital": "Digital Music", # Mantenemos la tilde por si acaso
-
-    "musical instruments": "Musical Instruments",
-    "instruments": "Musical Instruments",
-    "instrumentos musicales": "Musical Instruments"
-}
-
-
 # FUNCIONES GENERALES
 def eliminar_anterior(driver):
     """
@@ -659,7 +638,7 @@ def obtener_articulos_populares(cursor):
           FROM reviews
           GROUP BY asin
           HAVING COUNT(id_review) < 40
-          ORDER BY COUNT(id_review) DESC
+          ORDER BY COUNT(id_review) DESC, asin ASC
           LIMIT 5
          ) AS top_articulos ON r.asin = top_articulos.asin;
       """
@@ -751,9 +730,24 @@ def cuarta_funcionalidad(cursor, driver):
     # Extraemos la lista de usuarios únicos para calcular afinidades (es decir, es una lista que anteriormente se convirtió en set para borrar repetidos)
     lista_usuarios = list(set([fila[0] for fila in productos_y_usuarios]))
 
+
+    try: #creamos aquí el índice porque lo necesitamos para optimizar la consulta
+        cursor.execute("CREATE INDEX idx_temp_comunes ON reviews(reviewerID, asin);")
+        conexion_mysql.commit()
+    except Exception:
+        pass
+    
     # Calculo los artículos en común entre esos usuarios
     relaciones_comun = obtener_intersecciones_usuarios(cursor, lista_usuarios)
 
+    try: #eliminamos el índice como hicimos antes
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 0;")
+        cursor.execute("DROP INDEX idx_temp_comunes ON reviews;")
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 1;")
+        conexion_mysql.commit()
+    except Exception:
+        pass
+    
     # Hacemos la carga en Neo4J
     cargar_populares_neo4j(driver, productos_y_usuarios, relaciones_comun)
     
