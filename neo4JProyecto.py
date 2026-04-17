@@ -8,6 +8,7 @@ from load_data import conexion_db_SQL, conexion_mongo
 from configuracion import nombre_bd_mongo, coleccion_mongo, uri, neo4j_user, neo4j_password, num_usuarios_y_similitudes
 import os
 from neo4j import GraphDatabase
+import time
 
 
 # segunda parte
@@ -284,9 +285,9 @@ def mostrar_usuario(driver):
             print("No hay resultados de la consulta")
             return
 
-        print("Usuario(s) con el número máximo de vecinos:")
+        print("\nUsuario(s) con el número máximo de vecinos:")
         for elem in res:
-            print(f"Usuario: {elem['u']['id']}, Número de vecinos: {elem['vecinos']}")
+            print(f"Usuario: {elem['u']['id']} | Número de vecinos: {elem['vecinos']}")
 
 
 # EN ESTA FUNCIÓN SE AGRUPA TODO LO DEL PRIMER APARTADO
@@ -315,32 +316,41 @@ def primera_funcionalidad(conexion_mysql, cursor, driver):
     insertar_usuarios_similitudes(driver, u_mas_reviews, lista_similitudes)
 
     mostrar_usuario(driver)
+    time.sleep(2)
 
 
 
 # COMIENZA APARTADO 2
 # Funciones auxiliares de la segunda funcionalidad
-def eleccion_usuario():
+def eleccion_usuario(cursor):
     """
-    Función que da a elegir al usuario el tipo de producto que desea visualizar el estudio de sus reviews
-    y cuantos articulos aleatorios desea visualizar.
-
+    Función que da a elegir al usuario el tipo de producto y el número de articulos
+    Obtiene las categorías disponibles haciendo una consulta DISTINCT a MySQL.
+    
     Args:
-    - None
+    - cursor: conexión a MySQL para realizar consultas en la base de datos
     Returns:
-    - tipo (str): tipo de producto escogido por el usuario
-    - n_articulos (int): numero de articulos aleatorios.
+    - None
     """
+    cursor.execute("SELECT DISTINCT categoria FROM articulos WHERE categoria IS NOT NULL") #obtenemos las categorías disponibles
+    # Extraemos los resultados y limpiamos la lista
+    categorias_db = [fila[0] for fila in cursor.fetchall()]
 
-    print("Tipos de artículo: " + ", ".join(tipos_articulos_validos.values())) #acudimos al diccionario creado al principio que incluye posibles malas formas de escribir el tipo
+    # Imprimimos todas las opciones
+    print("\nTipos de artículo disponibles: " + ", ".join(categorias_db))
+
+    categorias_lower = [cat.lower() for cat in categorias_db] #pasamos todas a minúsculas para al menos aceptar algunas palabras más del usuario
 
     while True:
         tipo_consulta = input("Introduzca el tipo de artículo: ").strip().lower()
-        if tipo_consulta in tipos_articulos_validos.keys():
-            tipo = tipos_articulos_validos[tipo_consulta]
+
+        if tipo_consulta in categorias_lower:
+            # Si acierta, buscamos en qué posición está y recuperamos el nombre oficial con sus mayúsculas correctas
+            indice = categorias_lower.index(tipo_consulta)
+            tipo = categorias_db[indice]
             break
         
-        print("El tipo de artículo introducido es incorrecto.\n")
+        print("El tipo de artículo introducido no se encuentra en la base de datos.\n")
 
     while True:
         entrada = input("Introduzca el número de artículos aleatorios: ").strip()
@@ -469,7 +479,7 @@ def segunda_funcionalidad(cursor, driver):
     - None
     """
     # Pedir n, tipo de producto al usuario
-    n_articulos, tipo = eleccion_usuario()
+    n_articulos, tipo = eleccion_usuario(cursor)
 
     # Consultar artículos y usuarios en MySQL
     asins, datos_reviews = consulta(cursor, n_articulos, tipo)
@@ -482,7 +492,8 @@ def segunda_funcionalidad(cursor, driver):
     cargar_articulo_usuarios(driver, asins, datos_reviews)
 
     print("Carga de datos concluida. Ya puedes consultar la relación de cada artículo con los usuarios que lo han comentado.")
-
+    time.sleep(2)
+    
 
 #COMIENZA APARTADO 3
 def obtener_usuarios_multicategoria(cursor, opcion):
@@ -624,7 +635,7 @@ def tercera_funcionalidad(cursor, driver, opcion):
     cargar_categorias_neo4j(driver, datos_filtrados)
     
     print("Carga de datos del apartado 4.3 concluida ")
-
+    time.sleep(2)
 
 
 # COMIENZO DEL APARTADO 4.4
@@ -747,7 +758,7 @@ def cuarta_funcionalidad(cursor, driver):
     cargar_populares_neo4j(driver, productos_y_usuarios, relaciones_comun)
     
     print("Carga en Neo4J para el apartado 4.4 finalizada.") 
-
+    time.sleep(2)
 
 
 if __name__ == "__main__":

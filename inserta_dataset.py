@@ -1,3 +1,5 @@
+# LUCÍA RAVENTÓS GONZALVO Y MANUEL O'SHANAHAN DELGADO-TARAMONA 2ºIMAT B
+
 from load_data import conexion_db_SQL, conexion_mongo
 from configuracion import ruta_alimentos, nombre_bd_mongo, coleccion_mongo, nombre_bd_sql
 import json
