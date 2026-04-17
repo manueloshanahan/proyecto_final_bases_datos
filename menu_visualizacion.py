@@ -6,7 +6,7 @@ elegir distintas visualizaciones y que el programa no termine hasta que elija "s
 
 
 Ejecución por terminal:      streamlit run menu_visualizacion.py                ó
-python -m streamlit run .\proyecto_final_bases_datos\menu_visualizacion.py
+python -m streamlit run menu_visualizacion.py
 """
 from load_data import conexion_db_SQL, conexion_mongo
 from configuracion import nombre_bd_mongo, coleccion_mongo
