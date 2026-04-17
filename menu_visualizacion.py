@@ -17,7 +17,7 @@ from collections import Counter
 from wordcloud import WordCloud
 import numpy as np
 import pandas as pd
-import os #las usaremos para matar el poceso 
+import os #las usaremos para matar el proceso 
 import signal
 
 
